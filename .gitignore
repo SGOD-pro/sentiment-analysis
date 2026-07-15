@@ -1,0 +1,7 @@
+.vscode
+.agents
+
+node_modules
+artifacts
+
+.env

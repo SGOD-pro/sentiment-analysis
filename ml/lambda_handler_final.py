@@ -1,0 +1,186 @@
+"""
+Final production Lambda handler.
+Sentiment: MLP forward pass, pure numpy, asymmetric threshold applied.
+Issue detection: nearest-centroid lookup, only runs when sentiment=negative.
+One embedding computed once, feeds both branches.
+
+Package contents (/opt/model in Lambda layer):
+  bge_onnx_quantized/       (ONNX encoder + tokenizer, ~35-40MB)
+  mlp_weights.npz           (tiny, <1MB)
+  issue_centroids.npy       (tiny, K x 384 floats, KB range)
+  config.json
+
+requirements.txt:
+  onnxruntime
+  numpy
+  tokenizers
+(NOT: torch, transformers, sentence-transformers, sklearn)
+"""
+
+import json
+import os
+import numpy as np
+import onnxruntime as ort
+from tokenizers import Tokenizer
+
+# In Lambda, this is the layer mount point - /opt/model is correct there,
+# do not change it for deployment. For LOCAL testing before you ever touch
+# AWS, set the env var to point at wherever export_mlp_and_clusters.py
+# actually wrote its output, e.g.:
+#   os.environ["ARTIFACT_DIR"] = "/content/drive/MyDrive/Dataset/embeddings_output/lambda_deploy_artifacts"
+# Defaults to /opt/model so nothing changes when this actually deploys.
+ARTIFACT_DIR = os.environ.get("ARTIFACT_DIR", "/opt/model")
+
+with open(f"{ARTIFACT_DIR}/config.json") as f:
+    CONFIG = json.load(f)
+
+tokenizer = Tokenizer.from_file(f"{ARTIFACT_DIR}/bge_onnx_quantized/tokenizer.json")
+tokenizer.enable_padding(pad_id=0, pad_token="[PAD]")
+tokenizer.enable_truncation(max_length=256)
+
+onnx_session = ort.InferenceSession(
+    f"{ARTIFACT_DIR}/bge_onnx_quantized/model_quantized.onnx",
+    providers=["CPUExecutionProvider"],
+)
+
+mlp_weights = np.load(f"{ARTIFACT_DIR}/mlp_weights.npz")
+issue_centroids = np.load(f"{ARTIFACT_DIR}/issue_centroids.npy")  # shape (K, 384)
+
+
+def embed_texts(texts: list[str]) -> np.ndarray:
+    encodings = tokenizer.encode_batch(texts)  # encode_batch pads to same length automatically
+    input_ids = np.array([e.ids for e in encodings], dtype=np.int64)
+    attention_mask = np.array([e.attention_mask for e in encodings], dtype=np.int64)
+    token_type_ids = np.zeros_like(input_ids)
+
+    outputs = onnx_session.run(
+        None,
+        {"input_ids": input_ids, "attention_mask": attention_mask, "token_type_ids": token_type_ids},
+    )
+    last_hidden_state = outputs[0]
+    cls_embeddings = last_hidden_state[:, 0, :]  # CLS pooling - verify matches training pipeline
+    norms = np.linalg.norm(cls_embeddings, axis=1, keepdims=True)
+    return cls_embeddings / np.clip(norms, 1e-9, None)
+
+
+def relu(x):
+    return np.maximum(0, x)
+
+
+def mlp_forward(x: np.ndarray) -> np.ndarray:
+    """VERIFY key names against your exported mlp_weights.npz - see export script warning."""
+    w1, b1 = mlp_weights["net.0.weight"], mlp_weights["net.0.bias"]
+    w2, b2 = mlp_weights["net.3.weight"], mlp_weights["net.3.bias"]
+    w3, b3 = mlp_weights["net.6.weight"], mlp_weights["net.6.bias"]
+
+    h1 = relu(x @ w1.T + b1)
+    h2 = relu(h1 @ w2.T + b2)
+    logits = h2 @ w3.T + b3
+
+    exp_logits = np.exp(logits - logits.max(axis=1, keepdims=True))
+    return exp_logits / exp_logits.sum(axis=1, keepdims=True)
+
+
+def apply_asymmetric_threshold(probs: np.ndarray):
+    cfg = CONFIG["sentiment"]
+    pos_threshold = cfg["positive_margin_threshold"]
+    neg_threshold = cfg["negative_margin_threshold"]
+    negative_id, neutral_id, positive_id = (
+        cfg["negative_class_id"], cfg["neutral_class_id"], cfg["positive_class_id"]
+    )
+
+    sorted_probs = np.sort(probs, axis=1)
+    margins = sorted_probs[:, -1] - sorted_probs[:, -2]
+    argmax_preds = probs.argmax(axis=1)
+    final_preds = argmax_preds.copy()
+
+    positive_uncertain = (argmax_preds == positive_id) & (margins < pos_threshold)
+    final_preds[positive_uncertain] = neutral_id
+    negative_uncertain = (argmax_preds == negative_id) & (margins < neg_threshold)
+    final_preds[negative_uncertain] = neutral_id
+
+    return final_preds, margins
+
+
+def assign_issue_cluster(embedding: np.ndarray):
+    """
+    Nearest-centroid lookup. Only meaningful for negative-sentiment reviews
+    (that's what the clusters were built from) - caller is responsible for
+    only invoking this when sentiment == negative.
+    """
+    cfg = CONFIG["issue_detection"]
+    distances = np.linalg.norm(issue_centroids - embedding, axis=1)
+    nearest_idx = int(distances.argmin())
+    nearest_distance = float(distances[nearest_idx])
+
+    threshold = cfg["distance_threshold"]
+    if threshold is not None and nearest_distance > threshold:
+        return cfg["fallback_label"], nearest_distance
+
+    cluster_name = cfg["cluster_names"].get(str(nearest_idx), cfg["fallback_label"])
+    return cluster_name, nearest_distance
+
+
+def lambda_handler(event, context):
+    """
+    Expects: {"texts": ["review 1", "review 2", ...]}
+    Preprocessing (text_preprocessing.py) must run BEFORE texts reach here.
+    """
+    texts = event.get("texts", [])
+    if not texts:
+        return {"statusCode": 400, "body": json.dumps({"error": "no texts provided"})}
+
+    embeddings = embed_texts(texts)
+
+    sentiment_probs = mlp_forward(embeddings)
+    sentiment_preds, margins = apply_asymmetric_threshold(sentiment_probs)
+
+    label_names = CONFIG["sentiment"]["label_names"]
+    negative_id = CONFIG["sentiment"]["negative_class_id"]
+
+    results = []
+    for i, text in enumerate(texts):
+        sentiment_label = label_names[sentiment_preds[i]]
+
+        # issue detection ONLY runs for negative sentiment - this is a
+        # deliberate product decision (positive/neutral reviews don't
+        # have "issues" to categorize), not an oversight
+        issue_tag = None
+        issue_distance = None
+        if sentiment_preds[i] == negative_id:
+            issue_tag, issue_distance = assign_issue_cluster(embeddings[i])
+
+        results.append({
+            "text": text,
+            "sentiment": sentiment_label,
+            "sentiment_confidence_margin": float(margins[i]),
+            "sentiment_probabilities": {
+                label_names[j]: float(p) for j, p in enumerate(sentiment_probs[i])
+            },
+            "issue_tag": issue_tag,
+            "issue_distance": issue_distance,
+        })
+
+    return {"statusCode": 200, "body": json.dumps({"results": results})}
+
+
+# ---------------------------------------------------------------------------
+# LOCAL TEST - run this file directly (not via Lambda) to verify everything
+# loads and produces sane output BEFORE you package and deploy anything.
+# Set ARTIFACT_DIR env var above to your local export path first.
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    test_event = {
+        "texts": [
+            "this broke after two days, complete waste of money",
+            "works exactly as described, very happy with it",
+            "it's fine, does the job, nothing special",
+        ]
+    }
+    response = lambda_handler(test_event, None)
+    print(json.dumps(json.loads(response["body"]), indent=2))
+    print("\nSanity check: does sentiment match what you'd expect for each")
+    print("example above? Does the negative one get a real issue_tag (not")
+    print("null, not always 'other')? If either looks wrong, do NOT package")
+    print("this for Lambda yet - debug locally first, it's much faster to")
+    print("iterate here than through a Lambda deploy cycle.")
