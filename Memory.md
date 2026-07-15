@@ -7,10 +7,10 @@ Purpose: load full project context in one file, not by reading every folder.
 
 ## Current Phase
 
-Phase 7 — Backend API (In Progress)
+Phase 8 — Frontend (Next)
 
 Lambda handler is working and locally tested.
-Backend FastAPI + API Gateway not yet built.
+Backend FastAPI is complete — all routes built and tested (40 tests passing).
 Dashboard not yet built.
 
 ---
@@ -52,26 +52,34 @@ MLP + asymmetric threshold:
 
 DistilBERT and finetuned BGE both tested — both lost. Do not revisit.
 
+### Backend API — complete, all 40 tests passing
+
+Stack: FastAPI + boto3 + pydantic-settings, uv package manager, moto for tests.
+
+Routes:
+```
+POST /api/upload              — CSV upload, S3 storage, batch creation, background processing
+GET  /api/batches/:id/status  — batch processing status
+GET  /api/trends              — weekly sentiment counts from Aggregates
+GET  /api/categories/summary  — ranked category list by sentiment score
+GET  /api/issues/distribution — issue tag counts for negative reviews
+GET  /api/reviews             — paginated, filterable review list
+GET  /api/reviews/:id         — single review detail
+GET  /health                  — health check
+```
+
+Key files: `backend/main.py`, `config.py`, `database.py`, `logger.py`, `models.py`
+Routers: `routers/{upload,batches,trends,categories,issues,reviews}.py`
+Services: `services/{batch_processor,lambda_client}.py`
+Tests: `tests/test_{health,upload,batch_processor,batches,trends,categories,issues,reviews}.py`
+
+Aggregates key patterns: `TREND#{category}#{week}`, `CAT#{category}`, `ISSUE#{tag}#{week}`
+Batch processor: chunks of 50 → Lambda, partial failure recovery, background task via FastAPI.
+All config from env vars (pydantic-settings). No hardcoded values. Structured JSON logging.
+
 ---
 
 ## What Is Not Done (next to build)
-
-### Phase 7 — Backend (start here)
-
-FastAPI app with these routes:
-```
-POST /api/upload         — accept CSV, map columns, queue batch
-GET  /api/batches/:id    — poll processing status
-GET  /api/trends         — sentiment trend by week/month
-GET  /api/categories/summary
-GET  /api/issues/distribution
-GET  /api/reviews        — paginated, filterable
-GET  /api/reviews/:id
-```
-
-Lambda client: call inference Lambda in batches of 50-100 reviews.
-
-DynamoDB tables: Reviews, Batches, Aggregates (see Architecture.md).
 
 ### Phase 8 — Frontend
 
