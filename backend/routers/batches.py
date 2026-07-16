@@ -12,10 +12,13 @@ Example:
 
 from fastapi import APIRouter
 
+from config import get_settings
 from database import get_tables
+from logger import get_logger
 from models import ApiResponse
 
 router = APIRouter(prefix="/api")
+log = get_logger(__name__)
 
 
 @router.get("/batches/{batch_id}/status", response_model=ApiResponse)
@@ -39,3 +42,37 @@ def batch_status(batch_id: str):
             "uploaded_at": item.get("uploaded_at", ""),
         },
     )
+
+
+def _wipe_table(table, key_schema) -> int:
+    """Delete every item in a DynamoDB table. Returns count deleted."""
+    key_names = [k["AttributeName"] for k in key_schema]
+    deleted = 0
+    scan_kwargs = {"ProjectionExpression": ", ".join(key_names)}
+    while True:
+        resp = table.scan(**scan_kwargs)
+        with table.batch_writer() as batch:
+            for item in resp.get("Items", []):
+                batch.delete_item(Key={k: item[k] for k in key_names})
+                deleted += 1
+        if "LastEvaluatedKey" not in resp:
+            break
+        scan_kwargs["ExclusiveStartKey"] = resp["LastEvaluatedKey"]
+    return deleted
+
+
+@router.delete("/data/reset", response_model=ApiResponse)
+def reset_all_data():
+    """Wipe all Reviews, Batches, and Aggregates data. Only works when DEBUG=true."""
+    settings = get_settings()
+    if not settings.debug:
+        return ApiResponse(success=False, error_code="FORBIDDEN", message="Only available in debug mode")
+
+    tables = get_tables()
+    counts = {}
+    counts["reviews"] = _wipe_table(tables.reviews, [{"AttributeName": "review_id"}])
+    counts["batches"] = _wipe_table(tables.batches, [{"AttributeName": "batch_id"}])
+    counts["aggregates"] = _wipe_table(tables.aggregates, [{"AttributeName": "agg_key"}, {"AttributeName": "metric"}])
+
+    log.info("data reset", extra={"deleted": counts})
+    return ApiResponse(success=True, data={"deleted": counts})
