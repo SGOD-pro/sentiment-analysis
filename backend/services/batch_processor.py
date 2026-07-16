@@ -108,10 +108,10 @@ def process_batch(batch_id: str) -> None:
                 "review_date": review_date,
                 "processed_at": datetime.now(timezone.utc).isoformat(),
                 "sentiment": sentiment,
-                "confidence_margin": str(result.get("confidence_margin", 0)),
-                "prob_negative": str(result.get("prob_negative", 0)),
-                "prob_neutral": str(result.get("prob_neutral", 0)),
-                "prob_positive": str(result.get("prob_positive", 0)),
+                "confidence_margin": str(result.get("sentiment_confidence_margin", 0)),
+                "prob_negative": str(result.get("sentiment_probabilities", {}).get("negative", 0)),
+                "prob_neutral": str(result.get("sentiment_probabilities", {}).get("neutral", 0)),
+                "prob_positive": str(result.get("sentiment_probabilities", {}).get("positive", 0)),
             }
 
             # Store all original CSV columns as extra_columns

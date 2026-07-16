@@ -4,16 +4,23 @@ FastAPI application entry point.
 Purpose: Create and configure the FastAPI app with CORS, routers, and health check.
 Input: N/A (ASGI app).
 Output: FastAPI app instance.
-Dependencies: fastapi, config, logger
+Dependencies: fastapi, config, logger, startup_check
 Example:
     uvicorn main:app --reload
 """
+
+from contextlib import asynccontextmanager
+
+from dotenv import load_dotenv
+
+load_dotenv()  # populate os.environ before boto3 clients are created
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import get_settings
 from logger import get_logger
+from startup_check import run_aws_startup_checks
 from models import ApiResponse
 from routers.batches import router as batches_router
 from routers.categories import router as categories_router
@@ -25,11 +32,19 @@ from routers.upload import router as upload_router
 log = get_logger(__name__)
 settings = get_settings()
 
-app = FastAPI(title=settings.app_name, debug=settings.debug)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Run startup checks before the server starts accepting requests."""
+    run_aws_startup_checks()
+    yield
+
+
+app = FastAPI(title=settings.app_name, debug=settings.debug, lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # ponytail: tighten to frontend origin in production
+    allow_origins=["http://localhost:5173"],  # ponytail: tighten to frontend origin in production
     allow_methods=["*"],
     allow_headers=["*"],
 )

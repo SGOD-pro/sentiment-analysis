@@ -1,0 +1,164 @@
+@import "tailwindcss";
+
+@plugin "tailwindcss-animate";
+@custom-variant dark (&:is(.dark *));
+
+@theme {
+  /* Shadcn variables mapped to tailwind v4 colors */
+  --color-background: oklch(var(--background));
+  --color-foreground: oklch(var(--foreground));
+  --color-card: oklch(var(--card));
+  --color-card-foreground: oklch(var(--card-foreground));
+  --color-popover: oklch(var(--popover));
+  --color-popover-foreground: oklch(var(--popover-foreground));
+  --color-primary: oklch(var(--primary));
+  --color-primary-foreground: oklch(var(--primary-foreground));
+  --color-secondary: oklch(var(--secondary));
+  --color-secondary-foreground: oklch(var(--secondary-foreground));
+  --color-muted: oklch(var(--muted));
+  --color-muted-foreground: oklch(var(--muted-foreground));
+  --color-accent: oklch(var(--accent));
+  --color-accent-foreground: oklch(var(--accent-foreground));
+  --color-destructive: oklch(var(--destructive));
+  --color-destructive-foreground: oklch(var(--destructive-foreground));
+  --color-border: oklch(var(--border));
+  --color-input: oklch(var(--input));
+  --color-ring: oklch(var(--ring));
+
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+
+  /* My custom tokens (Design.md exact tokens for manual overrides) */
+  --color-primary-active: #003ECC;
+  --color-primary-disabled: #A8B8CC;
+  --color-ink: #0A0B0D;
+  --color-body: #5B616E;
+  --color-hairline: #DEE1E6;
+  --color-canvas: #FFFFFF;
+  --color-surface-soft: #F7F7F7;
+  --color-surface-strong: #EEF0F3;
+  --color-semantic-up: #05B169;
+  --color-semantic-down: #CF202F;
+  --color-warning: #F4B000;
+
+  --color-dark-bg: #0D0E10;
+  --color-dark-surface: #121315;
+  --color-dark-surface-low: #1B1C1E;
+  --color-dark-surface-container: #1F2022;
+  --color-dark-surface-high: #292A2C;
+  --color-dark-outline: #8D90A2;
+  --color-dark-outline-variant: #434656;
+  --color-dark-on-surface: #F8F9FA;
+  --color-dark-on-surface-variant: #E3E2E5;
+  --color-dark-primary: #B7C4FF;
+
+  --font-sans: "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+
+  --spacing-xxs: 4px;
+  --spacing-xs: 8px;
+  --spacing-sm: 12px;
+  --spacing-base: 16px;
+  --spacing-md: 20px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
+  --spacing-xxl: 48px;
+
+  --radius-chip: 4px;
+  --radius-control: 6px;
+  --radius-panel: 8px;
+  --radius-card: 12px;
+
+  --animate-fade-in-scale: fade-in-scale 200ms ease-out;
+  @keyframes fade-in-scale {
+    from { opacity: 0; transform: scale(0.95); }
+    to { opacity: 1; transform: scale(1); }
+  }
+}
+
+:root {
+  /* Light mode mappings based on Design.md */
+  --background: 0.976 0 0; /* surface-soft #F7F7F7 */
+  --foreground: 0.149 0.005 264.5; /* ink #0A0B0D */
+  
+  --card: 1 0 0; /* canvas #FFFFFF */
+  --card-foreground: 0.149 0.005 264.5; /* ink #0A0B0D */
+  
+  --popover: 1 0 0; /* canvas #FFFFFF */
+  --popover-foreground: 0.149 0.005 264.5; /* ink #0A0B0D */
+  
+  --primary: 0.528 0.263 262.9; /* primary #0052FF */
+  --primary-foreground: 1 0 0; /* canvas #FFFFFF */
+  
+  --secondary: 0.954 0.005 258.3; /* surface-strong #EEF0F3 */
+  --secondary-foreground: 0.492 0.022 265.8; /* body #5B616E */
+  
+  --muted: 0.954 0.005 258.3; /* surface-strong #EEF0F3 */
+  --muted-foreground: 0.604 0.014 255.5; /* muted #7C828A */
+  
+  --accent: 0.954 0.005 258.3; /* surface-strong #EEF0F3 */
+  --accent-foreground: 0.149 0.005 264.5; /* ink #0A0B0D */
+  
+  --destructive: 0.551 0.206 24; /* semantic-down #CF202F */
+  --destructive-foreground: 1 0 0;
+  
+  --border: 0.909 0.008 260.7; /* hairline #DEE1E6 */
+  --input: 0.909 0.008 260.7; /* hairline #DEE1E6 */
+  
+  --ring: 0.528 0.263 262.9; /* primary #0052FF */
+  
+  --radius: 0.45rem;              /* 6px (radius-control) */
+}
+
+.dark {
+  /* Dark mode mappings based on Design.md */
+  --background: 0.164 0.005 264.4; /* dark-bg #0D0E10 */
+  --foreground: 0.982 0.002 247.8; /* dark-on-surface #F8F9FA */
+  
+  --card: 0.186 0.004 264.5; /* dark-surface #121315 */
+  --card-foreground: 0.982 0.002 247.8; /* dark-on-surface #F8F9FA */
+  
+  --popover: 0.243 0.004 264.5; /* dark-surface-container #1F2022 */
+  --popover-foreground: 0.982 0.002 247.8; /* dark-on-surface #F8F9FA */
+  
+  --primary: 0.528 0.263 262.9; /* primary #0052FF (interactive blue) */
+  --primary-foreground: 1 0 0; /* #FFFFFF */
+  
+  --secondary: 0.285 0.004 264.5; /* dark-surface-high #292A2C */
+  --secondary-foreground: 0.914 0.004 301.4; /* dark-on-surface-variant #E3E2E5 */
+  
+  --muted: 0.226 0.004 264.5; /* dark-surface-low #1B1C1E */
+  --muted-foreground: 0.657 0.027 278.1; /* dark-outline #8D90A2 */
+  
+  --accent: 0.243 0.004 264.5; /* dark-surface-container #1F2022 */
+  --accent-foreground: 0.982 0.002 247.8; /* dark-on-surface #F8F9FA */
+  
+  --destructive: 0.551 0.206 24; /* semantic-down #CF202F */
+  --destructive-foreground: 1 0 0;
+  
+  --border: 0.398 0.027 276.8; /* dark-outline-variant #434656 */
+  --input: 0.398 0.027 276.8; /* dark-outline-variant #434656 */
+  
+  --ring: 0.528 0.263 262.9; /* primary #0052FF */
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: oklch(var(--background));
+  color: oklch(var(--foreground));
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Numbers always in mono — Design.md hard rule */
+.font-number { font-family: var(--font-mono); }
+
+/* Custom scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: oklch(var(--background)); }
+::-webkit-scrollbar-thumb { background: oklch(var(--border)); border-radius: 10px; }
+
+/* Sentiment chip colors used throughout (not shadcn Badge colors) */
+.chip-positive { background: rgba(5,177,105,0.12); color: #05B169; border: 1px solid rgba(5,177,105,0.25); }
+.chip-neutral  { background: rgba(244,176,0,0.12);  color: #F4B000; border: 1px solid rgba(244,176,0,0.25); }
+.chip-negative { background: rgba(207,32,47,0.12);  color: #CF202F; border: 1px solid rgba(207,32,47,0.25); }
