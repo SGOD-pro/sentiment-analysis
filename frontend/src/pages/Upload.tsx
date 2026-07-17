@@ -150,7 +150,7 @@ export default function Upload() {
           clearInterval(id);
         }
       } catch { /* retry */ }
-    }, 1500);
+    }, 100);
     return () => clearInterval(id);
   }, [step, batchId]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -298,13 +298,15 @@ export default function Upload() {
           <Card>
             <CardContent className="py-8 text-center space-y-4">
               <div className="w-10 h-10 border-4 border-border border-t-primary rounded-full animate-spin mx-auto" />
-              <p className="font-semibold">Processing reviews…</p>
+              <p className="font-semibold">{processed === total && total > 0 ? "Saving results…" : "Processing reviews…"}</p>
 
               <>
                 <div className="w-56 bg-muted rounded-full h-2 overflow-hidden m-auto">
                   <div className="h-full bg-primary rounded-full transition-all duration-500 origin-left" style={{ width: `${total > 0 ? (processed / total) * 100 : 0}%` }} />
                 </div>
-                <p className="text-xs font-number text-muted-foreground mt-1">{processed} / {total}</p>
+                <p className="text-xs font-number text-muted-foreground mt-1">
+                  {processed === total && total > 0 ? "Finalizing database writes" : `${processed} / ${total}`}
+                </p>
               </>
             </CardContent>
           </Card>

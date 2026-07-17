@@ -11,33 +11,40 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
-import { AlertTriangle, Filter, TrendingDown, TrendingUp, MessageSquare, Tag, Upload } from "lucide-react";
+import { AlertTriangle, Filter, TrendingDown, TrendingUp, MessageSquare, Tag, Upload, Angry, Annoyed, Smile } from "lucide-react";
 import { getCategoriesSummary, getIssuesDistribution, getTrends } from "@/api/client";
 import { loadColumnMap } from "@/hooks/useColumnMap";
 import { useSessionStore } from "@/hooks/useSessionStore";
 import type { CategorySummary, IssueCount, TrendWeek } from "@/types";
 import { DashboardPage } from "@/components/dashboard-layout";
+import { DateRangeFilter, type DateRangeValue } from "@/components/DateRangeFilter";
 import { cn } from "@/lib/utils";
+
+// ── Filter state shape ───────────────────────────────────────────────────────
+interface Filters {
+  category: string;
+  sentiment: string;
+  minConf: number;
+  dateRange: DateRangeValue;
+}
+
+const INITIAL_FILTERS: Filters = { category: "all", sentiment: "all", minConf: 0, dateRange: {} };
 
 // ── Sidebar ──────────────────────────────────────────────────────────────────
 function Sidebar({
-  catCol, categories, onFilter,
+  catCol, categories, filters, onFilter,
 }: {
   catCol?: string;
   categories: CategorySummary[];
-  onFilter: (f: { category: string; sentiment: string; minConf: number }) => void;
+  filters: Filters;
+  onFilter: (f: Partial<Filters>) => void;
 }) {
-  const [category, setCategory] = useState("all");
-  const [sentiment, setSentiment] = useState("all");
-  const [minConf, setMinConf] = useState(0);
-
   const sentimentBtns = [
-    { v: "negative", icon: "😠", label: "Neg" },
-    { v: "neutral", icon: "😐", label: "Neu" },
-    { v: "positive", icon: "😊", label: "Pos" },
+    { v: "negative", icon: Angry, label: "Neg" },
+    { v: "neutral", icon: Annoyed, label: "Neu" },
+    { v: "positive", icon: Smile, label: "Pos" },
   ];
 
   return (
@@ -49,30 +56,21 @@ function Sidebar({
       <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground -mt-4">Analysis Parameters</p>
 
       <div className="space-y-4 flex-1">
-        {/* Date Range — static UI, future enhancement */}
-        <div>
-          <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Date Range</p>
-          <Select defaultValue="30d">
-            <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="7d">Last 7 Days</SelectItem>
-              <SelectItem value="30d">Last 30 Days</SelectItem>
-              <SelectItem value="90d">Last 90 Days</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
+        {/* Date Range — wired to API */}
+        <DateRangeFilter onChange={(dateRange) => onFilter({ dateRange })} />
 
         {/* Category — only shown if catCol was mapped */}
         {catCol && (
           <div>
             <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">{catCol}</p>
-            <Select value={category} onValueChange={setCategory}>
-              <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All {catCol}s</SelectItem>
-                {categories.map((c) => <SelectItem key={c.category} value={c.category}>{c.category}</SelectItem>)}
-              </SelectContent>
-            </Select>
+            <select
+              className="w-full h-9 text-xs rounded-md border border-input bg-background px-3"
+              value={filters.category}
+              onChange={(e) => onFilter({ category: e.target.value })}
+            >
+              <option value="all">All {catCol}s</option>
+              {categories.map((c) => <option key={c.category} value={c.category}>{c.category}</option>)}
+            </select>
           </div>
         )}
 
@@ -80,11 +78,12 @@ function Sidebar({
         <div>
           <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Sentiment</p>
           <div className="grid grid-cols-3 gap-1">
-            {sentimentBtns.map(({ v, icon, label }) => (
-              <Button key={v} size="sm" variant={sentiment === v ? "default" : "outline"}
-                className="h-9 text-base px-0" onClick={() => setSentiment(sentiment === v ? "all" : v)}
+            {sentimentBtns.map(({ v, icon: Icon, label }) => (
+              <Button key={v} size="sm" variant={filters.sentiment === v ? "default" : "outline"}
+                className="h-9 text-base px-0"
+                onClick={() => onFilter({ sentiment: filters.sentiment === v ? "all" : v })}
                 title={label}>
-                {icon}
+                <Icon className="w-5 h-5" />
               </Button>
             ))}
           </div>
@@ -94,18 +93,15 @@ function Sidebar({
         <div>
           <div className="flex justify-between items-center mb-2">
             <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Confidence</p>
-            <span className="text-[10px] font-bold font-number text-muted-foreground">{Math.round(minConf * 100)}%</span>
+            <span className="text-[10px] font-bold font-number text-muted-foreground">{Math.round(filters.minConf * 100)}%</span>
           </div>
-          <Slider min={0} max={1} step={0.05} value={[minConf]} onValueChange={([v]) => setMinConf(v)} className="w-full" />
+          <Slider min={0} max={1} step={0.05} value={[filters.minConf]}
+            onValueChange={([v]) => onFilter({ minConf: v })} className="w-full" />
           <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
-            <span>0%</span><span>MIN: {Math.round(minConf * 100)}%</span>
+            <span>0%</span><span>MIN: {Math.round(filters.minConf * 100)}%</span>
           </div>
         </div>
       </div>
-
-      <Button className="w-full" onClick={() => onFilter({ category, sentiment, minConf })}>
-        Apply Filters
-      </Button>
     </div>
   );
 }
@@ -174,36 +170,58 @@ export default function Dashboard() {
   const [categories, setCategories] = useState<CategorySummary[]>([]);
   const [issues, setIssues] = useState<IssueCount[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filters, setFilters] = useState({ category: "all", sentiment: "all", minConf: 0 });
+  const [filters, setFilters] = useState<Filters>(INITIAL_FILTERS);
+
+  const updateFilters = (partial: Partial<Filters>) =>
+    setFilters((prev) => ({ ...prev, ...partial }));
 
   useEffect(() => {
     if (!batchId) { setLoading(false); return; }
+    setLoading(true);
     const cat = filters.category !== "all" ? filters.category : undefined;
+    const { from, to } = filters.dateRange;
     Promise.all([
-      getTrends(batchId, undefined, undefined, cat),
-      getCategoriesSummary(batchId),
-      getIssuesDistribution(batchId, undefined, undefined, cat),
+      getTrends(batchId, from, to, cat),
+      getCategoriesSummary(batchId, from, to),
+      getIssuesDistribution(batchId, from, to, cat),
     ]).then(([t, c, i]) => {
       if (t.data) setWeeks(t.data.weeks);
       if (c.data) setCategories(c.data.categories);
       if (i.data) setIssues(i.data.issues);
     }).finally(() => setLoading(false));
-  }, [batchId, filters]);
+  }, [batchId, filters.category, filters.dateRange]);
 
   if (!batchId) return <DashboardPage sidebar={<div className="p-5"><p className="text-xs text-muted-foreground">No active session</p></div>}><NoSessionPrompt /></DashboardPage>;
 
-  // Stats
+  // Client-side filtering: sentiment + minConf filter the category table display.
+  // ponytail: confidence filtering on aggregates uses dominant-ratio proxy.
+  //           Upgrade: backend avg_confidence field per category.
+  const visibleCategories = categories.filter((c) => {
+    if (filters.sentiment !== "all") {
+      const sentCount = c[filters.sentiment as "positive" | "negative" | "neutral"] ?? 0;
+      if (sentCount === 0) return false;
+    }
+    return true;
+  });
+
+  // Stats — derived from ALL categories (not filtered by confidence/sentiment)
+  // so stat cards always show real totals for the selected date range + category.
   const totalReviews = categories.reduce((s, c) => s + c.total, 0);
   const totalNeg = categories.reduce((s, c) => s + c.negative, 0);
   const pctNeg = totalReviews > 0 ? ((totalNeg / totalReviews) * 100).toFixed(1) : "0";
   const topIssue = issues[0];
   const spikeCategories = categories.filter((c) => c.total > 0 && c.negative / c.total > 0.3);
 
-  // Trend chart data shape
+  // Trend chart: filter series visibility based on sentiment selection
   const trendData = weeks.map((w) => ({ ...w, week: w.week.split("T")[0] ?? w.week }));
 
+  // Which sentiment series to show in the chart
+  const showPositive = filters.sentiment === "all" || filters.sentiment === "positive";
+  const showNeutral = filters.sentiment === "all" || filters.sentiment === "neutral";
+  const showNegative = filters.sentiment === "all" || filters.sentiment === "negative";
+
   return (
-    <DashboardPage sidebar={<Sidebar catCol={colMap.catCol} categories={categories} onFilter={setFilters} />}>
+    <DashboardPage sidebar={<Sidebar catCol={colMap.catCol} categories={categories} filters={filters} onFilter={updateFilters} />}>
       {/* Alert strip */}
       {spikeCategories.length > 0 && (
         <Alert variant="destructive" className="border-destructive/50 bg-destructive/10">
@@ -281,10 +299,13 @@ export default function Dashboard() {
                 <CartesianGrid strokeDasharray="3 3" stroke="oklch(var(--border))" />
                 <XAxis dataKey="week" tick={{ fill: "oklch(var(--muted-foreground))", fontSize: 11 }} />
                 <YAxis tick={{ fill: "oklch(var(--muted-foreground))", fontSize: 11 }} />
-                <Tooltip contentStyle={{ backgroundColor: "oklch(var(--background))", border: "1px solid oklch(var(--border))", borderRadius: 8 }} />
-                <Area type="monotone" dataKey="positive" stroke="#05B169" strokeWidth={2} fill="url(#g-pos)" dot={false} />
-                <Area type="monotone" dataKey="neutral" stroke="#7C828A" strokeWidth={2} fill="url(#g-neu)" dot={false} />
-                <Area type="monotone" dataKey="negative" stroke="#CF202F" strokeWidth={2} fill="url(#g-neg)" dot={false} />
+                <Tooltip
+                  contentStyle={{ backgroundColor: "oklch(var(--background))", border: "1px solid oklch(var(--border))", borderRadius: 8 }}
+                  formatter={(value: number, name: string) => [value, name.charAt(0).toUpperCase() + name.slice(1)]}
+                />
+                {showPositive && <Area type="monotone" dataKey="positive" stroke="#05B169" strokeWidth={2} fill="url(#g-pos)" dot={false} />}
+                {showNeutral && <Area type="monotone" dataKey="neutral" stroke="#7C828A" strokeWidth={2} fill="url(#g-neu)" dot={false} />}
+                {showNegative && <Area type="monotone" dataKey="negative" stroke="#CF202F" strokeWidth={2} fill="url(#g-neg)" dot={false} />}
               </AreaChart>
             </ResponsiveContainer>
           )}
@@ -309,7 +330,7 @@ export default function Dashboard() {
             </Button>
           </CardHeader>
           <CardContent className="px-0">
-            {loading ? <Skeleton className="h-48 mx-6" /> : categories.length === 0 ? (
+            {loading ? <Skeleton className="h-48 mx-6" /> : visibleCategories.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-10">
                 No {colMap.catCol ?? "category"} data yet.{" "}
                 <Link to="/upload" className="underline text-primary">Upload a CSV with a category column.</Link>
@@ -325,7 +346,7 @@ export default function Dashboard() {
                   </tr>
                 </thead>
                 <tbody>
-                  {categories.map((c) => {
+                  {visibleCategories.map((c) => {
                     const score = c.sentiment_score * 100;
                     const isNeg = score < 0;
                     return (

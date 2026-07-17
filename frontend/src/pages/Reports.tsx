@@ -11,12 +11,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { CalendarDays, FileDown, Upload } from "lucide-react";
-import { getCategoriesSummary, getIssuesDistribution } from "@/api/client";
+import { FileDown, Upload } from "lucide-react";
+import { getBatchStatus, getCategoriesSummary, getIssuesDistribution } from "@/api/client";
 import { useSessionStore } from "@/hooks/useSessionStore";
-import type { CategorySummary, IssueCount } from "@/types";
+import type { BatchStatus, CategorySummary, IssueCount } from "@/types";
 import { DashboardPage } from "@/components/dashboard-layout";
+import { DateRangeFilter, type DateRangeValue } from "@/components/DateRangeFilter";
 
 const BAR_COLORS: Record<string, string> = {
   positive: "#05B169", neutral: "#F4B000", negative: "#CF202F",
@@ -28,15 +28,20 @@ export default function Reports() {
   const [categories, setCategories] = useState<CategorySummary[]>([]);
   const [issues, setIssues] = useState<IssueCount[]>([]);
   const [loading, setLoading] = useState(true);
+  const [dateRange, setDateRange] = useState<DateRangeValue>({});
+  const [batchStatus, setBatchStatus] = useState<BatchStatus | null>(null);
 
   useEffect(() => {
     if (!batchId) { setLoading(false); return; }
-    Promise.all([getCategoriesSummary(batchId), getIssuesDistribution(batchId)])
-      .then(([c, i]) => {
+    setLoading(true);
+    const { from, to } = dateRange;
+    Promise.all([getCategoriesSummary(batchId, from, to), getIssuesDistribution(batchId, from, to), getBatchStatus(batchId)])
+      .then(([c, i, bs]) => {
         if (c.data) setCategories(c.data.categories);
         if (i.data) setIssues(i.data.issues);
+        if (bs.data) setBatchStatus(bs.data);
       }).finally(() => setLoading(false));
-  }, [batchId]);
+  }, [batchId, dateRange]);
 
   if (!batchId) {
     return (
@@ -70,18 +75,7 @@ export default function Reports() {
       <p className="font-semibold text-sm">Filters</p>
       <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Analysis Parameters</p>
       <Separator />
-      <div>
-        <p className="text-xs text-muted-foreground flex items-center gap-1.5"><CalendarDays className="w-3.5 h-3.5" /> Date Range</p>
-        <Select defaultValue="7d">
-          <SelectTrigger className="h-8 text-xs mt-2"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="7d">Last 7 Days</SelectItem>
-            <SelectItem value="30d">Last 30 Days</SelectItem>
-            <SelectItem value="90d">Last 90 Days</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-      <Button variant="outline" className="w-full mt-auto">Apply Filters</Button>
+      <DateRangeFilter onChange={setDateRange} />
     </div>
   );
 
@@ -110,8 +104,8 @@ export default function Reports() {
               <div className="grid grid-cols-3 gap-4">
                 {[
                   { label: "TOTAL PROCESSED", value: totalProcessed.toLocaleString() },
-                  { label: "AVG PROCESSING TIME", value: "—" },
-                  { label: "SYSTEM UPTIME", value: "—" },
+                  { label: "BATCH SIZE", value: batchStatus?.batch_size ? `${batchStatus.batch_size}` : "—" },
+                  { label: "PROCESSING TIME", value: batchStatus?.processing_duration_seconds != null ? `${batchStatus.processing_duration_seconds}s` : "—" },
                 ].map(({ label, value }) => (
                   <div key={label} className="bg-muted/30 rounded-lg p-4 border border-border">
                     <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{label}</p>

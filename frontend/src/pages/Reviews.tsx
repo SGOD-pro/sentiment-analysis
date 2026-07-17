@@ -22,6 +22,7 @@ import { loadColumnMap } from "@/hooks/useColumnMap";
 import { useSessionStore } from "@/hooks/useSessionStore";
 import type { CategorySummary, IssueCount, Review, ReviewFilters } from "@/types";
 import { DashboardPage } from "@/components/dashboard-layout";
+import { DateRangeFilter, type DateRangeValue } from "@/components/DateRangeFilter";
 
 const SENT_STYLE: Record<string, string> = {
   positive: "chip-positive",
@@ -106,6 +107,7 @@ export default function Reviews() {
   const [category, setCategory] = useState("all");
   const [issueTag, setIssueTag] = useState("all");
   const [minConf, setMinConf] = useState(0);
+  const [dateRange, setDateRange] = useState<DateRangeValue>({});
 
   // Option lists
   const [catOptions, setCatOptions] = useState<CategorySummary[]>([]);
@@ -124,6 +126,8 @@ export default function Reviews() {
     if (sentiment !== "all") f.sentiment = sentiment;
     if (category !== "all") f.category = category;
     if (issueTag !== "all") f.issue_tag = issueTag;
+    if (dateRange.from) f.from = dateRange.from;
+    if (dateRange.to) f.to = dateRange.to;
 
     getReviews(batchId, f).then((r) => {
       if (!r.success) { toast.error(r.message ?? "Failed to load reviews"); return; }
@@ -131,7 +135,7 @@ export default function Reviews() {
       setTotal(r.data?.total ?? 0);
       setTotalPages(r.data?.total_pages ?? 1);
     }).finally(() => setLoading(false));
-  }, [batchId, page, sentiment, category, issueTag, minConf]);
+  }, [batchId, page, sentiment, category, issueTag, minConf, dateRange]);
 
   if (!batchId) {
     return (
@@ -162,7 +166,9 @@ export default function Reviews() {
       <Separator />
 
       <div className="flex-1 overflow-y-auto space-y-1 pr-1">
-        <FilterSection label="Date Range"><p className="text-xs text-muted-foreground">Coming soon</p></FilterSection>
+        <FilterSection label="Date Range" defaultOpen>
+          <DateRangeFilter onChange={(v) => { setDateRange(v); setPage(1); }} />
+        </FilterSection>
         {colMap.catCol && (
           <FilterSection label={colMap.catCol} defaultOpen>
             <Select value={category} onValueChange={(v) => { setCategory(v); setPage(1); }}>
@@ -272,7 +278,7 @@ export default function Reviews() {
               <div className="grid grid-cols-2 gap-3 text-xs">
                 <div><p className="text-muted-foreground font-bold uppercase mb-1">Confidence</p><p className="font-number">{Number(selected.confidence_margin).toFixed(4)}</p></div>
                 <div><p className="text-muted-foreground font-bold uppercase mb-1">Probabilities</p>
-                  <p className="font-number">P:{Number(selected.prob_positive).toFixed(3)} N:{Number(selected.prob_neutral).toFixed(3)} Ng:{Number(selected.prob_negative).toFixed(3)}</p>
+                  <p className="font-number">P:{Number(selected.prob_positive).toFixed(3)} Neu:{Number(selected.prob_neutral).toFixed(3)} Neg:{Number(selected.prob_negative).toFixed(3)}</p>
                 </div>
                 {selected.review_date && <div><p className="text-muted-foreground font-bold uppercase mb-1">Date</p><p className="font-number">{selected.review_date}</p></div>}
                 {colMap.extraCols.map((col) => (

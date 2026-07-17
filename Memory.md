@@ -7,11 +7,11 @@ Purpose: load full project context in one file, not by reading every folder.
 
 ## Current Phase
 
-Phase 8 — Frontend (Next)
+Phase 8 — Frontend (Complete, verified)
 
 Lambda handler is working and locally tested.
-Backend FastAPI is complete — all routes built and tested (40 tests passing).
-Dashboard not yet built.
+Backend FastAPI is complete — all routes built and tested (60 tests passing).
+Dashboard, Reviews, Reports pages built and verified — all filters wired.
 
 ---
 
@@ -52,7 +52,7 @@ MLP + asymmetric threshold:
 
 DistilBERT and finetuned BGE both tested — both lost. Do not revisit.
 
-### Backend API — complete, all 40 tests passing
+### Backend API — complete, all 60 tests passing
 
 Stack: FastAPI + boto3 + pydantic-settings, uv package manager, moto for tests.
 
@@ -60,6 +60,7 @@ Routes:
 ```
 POST /api/upload              — CSV upload, S3 storage, batch creation, background processing
 GET  /api/batches/:id/status  — batch processing status
+GET  /api/batches/stats        — aggregate batch processing metrics
 GET  /api/trends              — weekly sentiment counts from Aggregates
 GET  /api/categories/summary  — ranked category list by sentiment score
 GET  /api/issues/distribution — issue tag counts for negative reviews
@@ -70,11 +71,13 @@ GET  /health                  — health check
 
 Key files: `backend/main.py`, `config.py`, `database.py`, `logger.py`, `models.py`
 Routers: `routers/{upload,batches,trends,categories,issues,reviews}.py`
-Services: `services/{batch_processor,lambda_client}.py`
-Tests: `tests/test_{health,upload,batch_processor,batches,trends,categories,issues,reviews}.py`
+Services: `services/{batch_processor,lambda_client,text_preprocessing}.py`
+Tests: `tests/test_{health,upload,batch_processor,batches,trends,categories,issues,reviews,filter_regression,text_preprocessing}.py`
 
 Aggregates key patterns: `TREND#{category}#{week}`, `CAT#{category}`, `ISSUE#{tag}#{week}`
-Batch processor: chunks of 50 → Lambda, partial failure recovery, background task via FastAPI.
+Batch processor: chunks → Lambda (concurrent via ThreadPoolExecutor), batch_write_item for DynamoDB,
+  text_preprocessing (HTML strip, URL removal, capitalize after fullstop) applied before inference,
+  processing_duration_seconds stored in Batches table.
 All config from env vars (pydantic-settings). No hardcoded values. Structured JSON logging.
 
 ---
@@ -103,6 +106,44 @@ Review feed page:
 - Filters: sentiment, category, issue_tag, date range, confidence threshold
 - All columns from original CSV shown alongside sentiment + issue_tag
 - Sort by date or confidence margin
+
+---
+
+## Bugs Fixed
+
+### Filter wiring (Phase 8 fix)
+
+Root cause: (a) + (c)
+- (a) Frontend: Date Range `<Select>` on Dashboard/Reports/Reviews was static UI — `onChange` never
+  wired to state that feeds `useEffect` dependency array. Filters updated sidebar but never triggered
+  re-fetch.
+- (c) Backend: `/api/categories/summary` accepted `from`/`to` params but queried `CAT#` keys which
+  have no date dimension — date filtering was silently ignored.
+
+Fix:
+- Frontend: replaced static Select with `DateRangeFilter` component (shadcn Calendar + Popover).
+  All filter state (dateRange, category, sentiment, confidence) now feeds `useEffect` deps that
+  trigger API re-fetches with correct query params.
+- Backend: `categories.py` now uses `TREND#` keys (which contain week info) when `from`/`to` are
+  provided, falls back to `CAT#` fast path when no date range given.
+- Sentiment filter on Dashboard now toggles trend chart series visibility (show only selected).
+- Confidence filter no longer incorrectly zeroes stat card totals — stats always show real totals.
+
+Regression tests: `test_filter_regression.py` (9 tests) covering all 4 filtered endpoints.
+
+### Batch processing speed (Phase 8 fix)
+
+- Lambda invocations changed from sequential `for` loop to concurrent `ThreadPoolExecutor`.
+- DynamoDB writes changed from individual `put_item` to `batch_writer` (up to 25 per call).
+- Text preprocessing added before inference (HTML strip, URL removal, hex/UUID removal).
+- Timing instrumentation added (structured logging: S3 read, Lambda, DynamoDB phases).
+- `processing_duration_seconds` now stored in Batches table.
+
+### Reports page metrics (Phase 8 fix)
+
+- Removed fake "System Uptime" card.
+- Replaced "Avg Processing Time" (was "—") with real "Avg Batch Time" from `/api/batches/stats`.
+- Added "Batches Processed" count card.
 
 ---
 

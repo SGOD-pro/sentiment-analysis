@@ -80,7 +80,7 @@ function TopBar() {
       <header className="sticky top-0 inset-x-0 h-14 z-50 flex items-center justify-between px-6 bg-sidebar">
         {/* Logo + Nav */}
         <div className="flex items-center gap-8">
-          <span className="text-base font-bold tracking-tight">SentiMetric</span>
+          <span className="text-base font-bold tracking-tight">SentiX</span>
           <nav className="hidden md:flex items-center gap-1">
             <div className="h-full overflow-hidden">
               <GooeyNav

@@ -40,6 +40,28 @@ def batch_status(batch_id: str):
             "processed_count": item.get("processed_count", 0),
             "filename": item.get("filename", ""),
             "uploaded_at": item.get("uploaded_at", ""),
+            "processing_duration_seconds": item.get("processing_duration_seconds"),
+            "batch_size": get_settings().lambda_batch_size,
+        },
+    )
+
+
+@router.get("/batches/stats", response_model=ApiResponse)
+def batch_stats():
+    """Return aggregate batch processing stats for the Reports page."""
+    tables = get_tables()
+    resp = tables.batches.scan()
+    items = resp.get("Items", [])
+
+    done = [i for i in items if i.get("status") == "done"]
+    durations = [float(i["processing_duration_seconds"]) for i in done if i.get("processing_duration_seconds")]
+    avg_time = round(sum(durations) / len(durations), 2) if durations else None
+
+    return ApiResponse(
+        success=True,
+        data={
+            "batches_processed": len(done),
+            "avg_processing_time_seconds": avg_time,
         },
     )
 

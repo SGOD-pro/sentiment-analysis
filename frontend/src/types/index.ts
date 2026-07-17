@@ -13,6 +13,8 @@ export interface BatchStatus {
   processed_count: number;
   filename: string;
   uploaded_at: string;
+  processing_duration_seconds?: number;
+  batch_size?: number;
 }
 
 export interface TrendWeek {
