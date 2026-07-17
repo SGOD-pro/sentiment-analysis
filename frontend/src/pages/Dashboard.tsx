@@ -2,9 +2,10 @@
  * Dashboard page — matches Stitch "SentiMetric | Dashboard (v2)" screen.
  * Layout: fixed sidebar (filters) + main area (alert, stat cards, trend chart, category table + issue bar).
  * All column labels come from useColumnMap, never hardcoded.
+ * All API calls scoped to batchId from useSessionStore.
  */
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -13,9 +14,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
-import { AlertTriangle, Filter, TrendingDown, TrendingUp, MessageSquare, Tag } from "lucide-react";
+import { AlertTriangle, Filter, TrendingDown, TrendingUp, MessageSquare, Tag, Upload } from "lucide-react";
 import { getCategoriesSummary, getIssuesDistribution, getTrends } from "@/api/client";
 import { loadColumnMap } from "@/hooks/useColumnMap";
+import { useSessionStore } from "@/hooks/useSessionStore";
 import type { CategorySummary, IssueCount, TrendWeek } from "@/types";
 import { DashboardPage } from "@/components/dashboard-layout";
 import { cn } from "@/lib/utils";
@@ -130,7 +132,7 @@ function StatCard({ label, value, sub, icon: Icon, delta, deltaUp }: {
         </div>
 
         {/* Middle: Value */}
-        <div className={cn("flex-1 text-4xl font-bold font-number leading-tight", label == "Top Issue" && "text-2xl mt-1")}>
+        <div className={cn("flex-1 text-4xl font-bold font-number leading-tight", label == "Top Issue" && "text-xl")}>
           {value}
         </div>
 
@@ -145,9 +147,29 @@ function StatCard({ label, value, sub, icon: Icon, delta, deltaUp }: {
   );
 }
 
+// ── No session guard ──────────────────────────────────────────────────────────
+function NoSessionPrompt() {
+  const navigate = useNavigate();
+  return (
+    <div className="flex-1 flex flex-col items-center justify-center gap-4 p-10 text-center">
+      <div className="w-1/2">
+        <Upload className="w-16 h-16 text-muted-foreground/30 mx-auto" />
+        <h2 className="text-xl font-semibold">No data loaded</h2>
+        <p className="text-sm text-muted-foreground my-6">
+          Upload a CSV file to start analyzing sentiment data. Your dashboard will populate automatically after processing.
+        </p>
+        <Button onClick={() => navigate("/upload")} className="gap-2">
+          <Upload className="w-4 h-4" />Import Data
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function Dashboard() {
   const colMap = loadColumnMap();
+  const batchId = useSessionStore((s) => s.batchId);
   const [weeks, setWeeks] = useState<TrendWeek[]>([]);
   const [categories, setCategories] = useState<CategorySummary[]>([]);
   const [issues, setIssues] = useState<IssueCount[]>([]);
@@ -155,17 +177,20 @@ export default function Dashboard() {
   const [filters, setFilters] = useState({ category: "all", sentiment: "all", minConf: 0 });
 
   useEffect(() => {
+    if (!batchId) { setLoading(false); return; }
     const cat = filters.category !== "all" ? filters.category : undefined;
     Promise.all([
-      getTrends(undefined, undefined, cat),
-      getCategoriesSummary(),
-      getIssuesDistribution(undefined, undefined, cat),
+      getTrends(batchId, undefined, undefined, cat),
+      getCategoriesSummary(batchId),
+      getIssuesDistribution(batchId, undefined, undefined, cat),
     ]).then(([t, c, i]) => {
       if (t.data) setWeeks(t.data.weeks);
       if (c.data) setCategories(c.data.categories);
       if (i.data) setIssues(i.data.issues);
     }).finally(() => setLoading(false));
-  }, [filters]);
+  }, [batchId, filters]);
+
+  if (!batchId) return <DashboardPage sidebar={<div className="p-5"><p className="text-xs text-muted-foreground">No active session</p></div>}><NoSessionPrompt /></DashboardPage>;
 
   // Stats
   const totalReviews = categories.reduce((s, c) => s + c.total, 0);
@@ -183,10 +208,13 @@ export default function Dashboard() {
       {spikeCategories.length > 0 && (
         <Alert variant="destructive" className="border-destructive/50 bg-destructive/10">
           <AlertTriangle className="h-4 w-4" />
-          <AlertDescription className="text-sm">
+          <AlertDescription className="text-sm flex">
             <span className="font-bold">Negative reviews &gt;30%</span>
-            <span className="text-muted-foreground"> in </span>
-            {spikeCategories.map((c) => c.category).join(", ")} ·{" "}
+            <span className="text-xs">
+              <span className=""> {"("} </span>
+              {spikeCategories.map((c) => c.category).join(", ")}
+              <span className=""> {")"} ·{" "}</span>
+            </span>
             <Link to="/reviews?sentiment=negative" className="underline font-bold">View reviews →</Link>
           </AlertDescription>
         </Alert>
@@ -270,11 +298,13 @@ export default function Dashboard() {
           <CardHeader className="pb-2 flex-row justify-between items-start">
             <div>
               <CardTitle className="text-base">
-                {colMap.catCol ? `${colMap.catCol} Analysis` : "Category Analysis"}
+                <span className="capitalize">
+                  {colMap.catCol ? `${colMap.catCol} Analysis` : "Category Analysis"}
+                </span>
               </CardTitle>
               <p className="text-xs text-muted-foreground">Sentiment by group</p>
             </div>
-            <Button variant="link" size="sm" asChild className="text-primary">
+            <Button variant="link" size="sm" asChild className="text-primary justify-start p-0">
               <Link to="/reports">View Reports →</Link>
             </Button>
           </CardHeader>
@@ -331,7 +361,7 @@ export default function Dashboard() {
                 <p className="text-xs text-muted-foreground">No issue data</p>
               </div>
             ) : (
-              <ResponsiveContainer width="100%" height={240}>
+              <ResponsiveContainer width="100%" height={280}>
                 <BarChart data={issues.slice(0, 8)} layout="vertical" margin={{ left: 0, right: 8 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="oklch(var(--border))" horizontal={false} />
                   <XAxis type="number" tick={{ fill: "oklch(var(--muted-foreground))", fontSize: 10 }} />

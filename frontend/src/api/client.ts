@@ -34,31 +34,35 @@ export function getBatchStatus(batchId: string) {
   return request<BatchStatus>(`/api/batches/${batchId}/status`);
 }
 
-export function getTrends(from?: string, to?: string, category?: string) {
+export function getTrends(batchId: string, from?: string, to?: string, category?: string) {
   const params = new URLSearchParams();
+  params.set("batch_id", batchId);
   if (from) params.set("from", from);
   if (to) params.set("to", to);
   if (category) params.set("category", category);
   return request<{ weeks: TrendWeek[] }>(`/api/trends?${params}`);
 }
 
-export function getCategoriesSummary(from?: string, to?: string) {
+export function getCategoriesSummary(batchId: string, from?: string, to?: string) {
   const params = new URLSearchParams();
+  params.set("batch_id", batchId);
   if (from) params.set("from", from);
   if (to) params.set("to", to);
   return request<{ categories: CategorySummary[] }>(`/api/categories/summary?${params}`);
 }
 
-export function getIssuesDistribution(from?: string, to?: string, category?: string) {
+export function getIssuesDistribution(batchId: string, from?: string, to?: string, category?: string) {
   const params = new URLSearchParams();
+  params.set("batch_id", batchId);
   if (from) params.set("from", from);
   if (to) params.set("to", to);
   if (category) params.set("category", category);
   return request<{ issues: IssueCount[] }>(`/api/issues/distribution?${params}`);
 }
 
-export function getReviews(filters: ReviewFilters = {}) {
+export function getReviews(batchId: string, filters: ReviewFilters = {}) {
   const params = new URLSearchParams();
+  params.set("batch_id", batchId);
   if (filters.sentiment) params.set("sentiment", filters.sentiment);
   if (filters.category) params.set("category", filters.category);
   if (filters.issue_tag) params.set("issue_tag", filters.issue_tag);

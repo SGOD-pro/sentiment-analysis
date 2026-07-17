@@ -1,12 +1,12 @@
 """
 Trends router — weekly sentiment counts.
 
-Purpose: Return weekly sentiment breakdown from Aggregates table.
-Input: Query params: from, to (ISO dates), category (optional).
+Purpose: Return weekly sentiment breakdown from Aggregates table, scoped to a batch.
+Input: Query params: batch_id (required), from, to (ISO dates), category (optional).
 Output: List of weekly sentiment counts.
 Dependencies: database, models, datetime
 Example:
-    GET /api/trends?from=2025-01-01&to=2025-03-31&category=Electronics
+    GET /api/trends?batch_id=abc&from=2025-01-01&to=2025-03-31&category=Electronics
     → {"success": true, "data": {"weeks": [{"week": "2025-W03", "positive": 10, ...}]}}
 """
 
@@ -40,11 +40,14 @@ def _validate_date(date_str: str) -> bool:
 
 @router.get("/trends", response_model=ApiResponse)
 def get_trends(
+    batch_id: str = Query(...),
     date_from: str = Query(alias="from", default=""),
     date_to: str = Query(alias="to", default=""),
     category: str = Query(default=""),
 ):
-    """Return weekly sentiment counts from Aggregates table."""
+    """Return weekly sentiment counts from Aggregates table, scoped to batch_id."""
+    if not batch_id:
+        return ApiResponse(success=False, error_code="MISSING_PARAM", message="batch_id is required")
     if date_from and not _validate_date(date_from):
         return ApiResponse(success=False, error_code="INVALID_DATE", message=f"Invalid 'from' date: {date_from}")
     if date_to and not _validate_date(date_to):
@@ -52,28 +55,20 @@ def get_trends(
 
     tables = get_tables()
 
-    # Build the prefix for querying aggregates
-    cat_prefix = category if category else ""
-    trend_prefix = f"TREND#{cat_prefix}#"
-
-    # Scan for matching TREND keys
-    # ponytail: full scan on Aggregates — acceptable because Aggregates table is small
-    # (one row per category×week×metric). Upgrade path: add GSI on agg_key prefix.
-    scan_kwargs = {}
-    resp = tables.aggregates.scan(**scan_kwargs)
+    # Query aggregates by batch_id, filter for TREND# prefix
+    resp = tables.aggregates.query(
+        KeyConditionExpression=Key("batch_id").eq(batch_id) & Key("agg_type").begins_with("TREND#"),
+    )
     items = resp.get("Items", [])
 
-    # Filter to TREND entries matching category prefix and date range
+    # Filter to matching category and date range
     week_from = _iso_to_week(date_from) if date_from else ""
     week_to = _iso_to_week(date_to) if date_to else ""
 
     weekly = {}
     for item in items:
-        key = item["agg_key"]
-        if not key.startswith("TREND#"):
-            continue
-
-        parts = key.split("#")  # TREND#category#week
+        agg_type = item["agg_type"]
+        parts = agg_type.split("#")  # TREND#category#week
         if len(parts) != 3:
             continue
 
@@ -89,9 +84,8 @@ def get_trends(
         if item_week not in weekly:
             weekly[item_week] = {"week": item_week, "positive": 0, "neutral": 0, "negative": 0}
 
-        metric = item["metric"]
-        if metric in ("positive", "neutral", "negative"):
-            weekly[item_week][metric] += int(item.get("value", 0))
+        for sentiment in ("positive", "neutral", "negative"):
+            weekly[item_week][sentiment] += int(item.get(sentiment, 0))
 
     weeks_sorted = sorted(weekly.values(), key=lambda w: w["week"])
 

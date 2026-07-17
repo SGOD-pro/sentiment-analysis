@@ -1,8 +1,10 @@
 /**
  * Reports page — matches Stitch "SentiMetric | Reports (v2)" screen.
  * Weekly performance stats, sentiment distribution bar chart, issue trend table.
+ * All API calls scoped to batchId from useSessionStore.
  */
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,8 +12,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { CalendarDays, FileDown } from "lucide-react";
+import { CalendarDays, FileDown, Upload } from "lucide-react";
 import { getCategoriesSummary, getIssuesDistribution } from "@/api/client";
+import { useSessionStore } from "@/hooks/useSessionStore";
 import type { CategorySummary, IssueCount } from "@/types";
 import { DashboardPage } from "@/components/dashboard-layout";
 
@@ -20,17 +23,33 @@ const BAR_COLORS: Record<string, string> = {
 };
 
 export default function Reports() {
+  const batchId = useSessionStore((s) => s.batchId);
+  const navigate = useNavigate();
   const [categories, setCategories] = useState<CategorySummary[]>([]);
   const [issues, setIssues] = useState<IssueCount[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    Promise.all([getCategoriesSummary(), getIssuesDistribution()])
+    if (!batchId) { setLoading(false); return; }
+    Promise.all([getCategoriesSummary(batchId), getIssuesDistribution(batchId)])
       .then(([c, i]) => {
         if (c.data) setCategories(c.data.categories);
         if (i.data) setIssues(i.data.issues);
       }).finally(() => setLoading(false));
-  }, []);
+  }, [batchId]);
+
+  if (!batchId) {
+    return (
+      <DashboardPage sidebar={<div className="p-5"><p className="text-xs text-muted-foreground">No active session</p></div>}>
+        <div className="flex-1 flex flex-col items-center justify-center gap-4 p-10 text-center">
+          <Upload className="w-16 h-16 text-muted-foreground/30" />
+          <h2 className="text-xl font-semibold">No data loaded</h2>
+          <p className="text-sm text-muted-foreground">Upload a CSV to generate reports.</p>
+          <Button onClick={() => navigate("/upload")} className="gap-2"><Upload className="w-4 h-4" />Import Data</Button>
+        </div>
+      </DashboardPage>
+    );
+  }
 
   // Derive distribution from categories
   const totPos = categories.reduce((s, c) => s + c.positive, 0);

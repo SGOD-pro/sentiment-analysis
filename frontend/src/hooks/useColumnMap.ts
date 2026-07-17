@@ -1,21 +1,34 @@
-/** Column mapping set by user at upload time. Persisted in localStorage. */
-export interface ColumnMap {
+/**
+ * Column mapping — compatibility shim.
+ * Reads/writes through useSessionStore. Existing callers (Dashboard, Reviews)
+ * keep working without changes until they migrate to useSessionStore directly.
+ */
+import { useSessionStore, type ColumnMapping } from "./useSessionStore";
+
+export type ColumnMap = {
   textCol: string;
   catCol?: string;
   dateCol?: string;
   extraCols: string[];
-}
-
-const KEY = "sentimetric:columnMap";
+};
 
 export function saveColumnMap(map: ColumnMap) {
-  localStorage.setItem(KEY, JSON.stringify(map));
+  const mapping: ColumnMapping = {
+    textCol: map.textCol,
+    categoryCol: map.catCol,
+    dateCol: map.dateCol,
+    extraCols: map.extraCols,
+  };
+  // Update just the columnMapping in the session store
+  useSessionStore.setState({ columnMapping: mapping });
 }
 
 export function loadColumnMap(): ColumnMap {
-  try {
-    const raw = localStorage.getItem(KEY);
-    if (raw) return JSON.parse(raw) as ColumnMap;
-  } catch { /* ignore */ }
-  return { textCol: "text", extraCols: [] };
+  const { columnMapping } = useSessionStore.getState();
+  return {
+    textCol: columnMapping.textCol,
+    catCol: columnMapping.categoryCol,
+    dateCol: columnMapping.dateCol,
+    extraCols: columnMapping.extraCols,
+  };
 }

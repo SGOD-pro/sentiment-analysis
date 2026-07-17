@@ -1,7 +1,7 @@
 /**
  * Upload page — matches Stitch "SentiMetric | Data Import & Analysis (v2)" screen.
  * Step 1: Data Source (drag-drop). Step 2: Column Mapping + preview table.
- * Step 3: Processing progress. Saves column map to localStorage.
+ * Step 3: Processing progress. Restores existing session on mount.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -11,9 +11,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { CheckCircle2, FileUp, Zap, AlertCircle, ArrowLeft } from "lucide-react";
+import { CheckCircle2, FileUp, Zap, AlertCircle, ArrowLeft, RotateCcw } from "lucide-react";
 import { getBatchStatus, uploadCSV } from "@/api/client";
 import { saveColumnMap } from "@/hooks/useColumnMap";
+import { useSessionStore } from "@/hooks/useSessionStore";
 
 type Step = "pick" | "map" | "processing" | "done";
 
@@ -31,6 +32,24 @@ export default function Upload() {
   const [processed, setProcessed] = useState(0);
   const [total, setTotal] = useState(0);
   const [error, setError] = useState("");
+
+  const session = useSessionStore();
+
+  // Restore session on mount
+  useEffect(() => {
+    if (!session.batchId) return;
+
+    if (session.status === "processing") {
+      setBatchId(session.batchId);
+      setTotal(session.totalReviews);
+      setStep("processing");
+    } else if (session.status === "done") {
+      setBatchId(session.batchId);
+      setTotal(session.totalReviews);
+      setStep("done");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Only on mount
 
   const parseCSV = useCallback((f: File) => {
     if (!f.name.endsWith(".csv")) { toast.error("Please upload a .csv file"); return; }
@@ -74,12 +93,39 @@ export default function Upload() {
       const res = await uploadCSV(file, textCol, catCol || undefined, dateCol || undefined);
       if (!res.success || !res.data) { setError(res.message ?? "Upload failed"); return; }
       saveColumnMap({ textCol, catCol: catCol || undefined, dateCol: dateCol || undefined, extraCols });
-      setBatchId(res.data.batch_id);
+
+      const newBatchId = res.data.batch_id;
+      setBatchId(newBatchId);
       setStep("processing");
+
+      // Persist session
+      session.setSession({
+        batchId: newBatchId,
+        filename: file.name,
+        totalReviews: preview.length, // approximate, updated by polling
+        columnMapping: { textCol, categoryCol: catCol || undefined, dateCol: dateCol || undefined, extraCols },
+        uploadedAt: new Date().toISOString(),
+      });
+
       toast.info("Analysis started — processing in the background");
     } catch (err) {
       setError(String(err));
     }
+  };
+
+  const handleNewSession = () => {
+    session.clearSession();
+    setStep("pick");
+    setFile(null);
+    setBatchId("");
+    setHeaders([]);
+    setPreview([]);
+    setTextCol("");
+    setDateCol("");
+    setCatCol("");
+    setProcessed(0);
+    setTotal(0);
+    setError("");
   };
 
   // Poll batch status
@@ -93,17 +139,20 @@ export default function Upload() {
         setTotal(Number(res.data.total_reviews));
         if (res.data.status === "done") {
           setStep("done");
+          session.setStatus("done");
+          session.setProcessedCount(Number(res.data.total_reviews));
           toast.success(`Analysis complete — ${res.data.total_reviews} reviews processed`);
           clearInterval(id);
         }
         if (res.data.status === "failed") {
           setError("Processing failed on the server");
+          session.setStatus("failed");
           clearInterval(id);
         }
       } catch { /* retry */ }
     }, 1500);
     return () => clearInterval(id);
-  }, [step, batchId]);
+  }, [step, batchId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="pt-14 min-h-screen">
@@ -128,40 +177,42 @@ export default function Upload() {
         )}
 
         {/* Step 1 — Data Source */}
-        <Card>
-          <CardHeader className="pb-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <span className="w-7 h-7 rounded-full bg-primary text-primary-foreground text-xs font-bold flex items-center justify-center">1</span>
-                <CardTitle className="text-base">Data Source</CardTitle>
+        {(step === "pick" || step === "map") && (
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <span className="w-7 h-7 rounded-full bg-primary text-primary-foreground text-xs font-bold flex items-center justify-center">1</span>
+                  <CardTitle className="text-base">Data Source</CardTitle>
+                </div>
+                {file && <Badge variant="outline" className="text-xs"><FileUp className="w-3 h-3 mr-1" />{file.name}</Badge>}
               </div>
-              {file && <Badge variant="outline" className="text-xs"><FileUp className="w-3 h-3 mr-1" />{file.name}</Badge>}
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div
-              onDrop={onDrop}
-              onDragOver={(e) => e.preventDefault()}
-              onClick={() => step === "pick" && inputRef.current?.click()}
-              className={`border-2 border-dashed rounded-lg p-10 text-center transition-colors ${step === "pick" ? "cursor-pointer hover:border-primary hover:bg-primary/5" : "border-border bg-muted/20"
-                }`}
-            >
-              <FileUp className="w-10 h-10 mx-auto text-muted-foreground mb-3" />
-              {step === "pick" ? (
-                <>
-                  <p className="text-sm">Drop your CSV here or <span className="text-primary font-semibold cursor-pointer">click to browse</span></p>
-                  <p className="text-xs text-muted-foreground mt-1">.csv only. Max 50MB</p>
-                </>
-              ) : (
-                <p className="text-sm text-muted-foreground">File loaded — see column mapping below</p>
-              )}
-              <input ref={inputRef} type="file" accept=".csv" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) parseCSV(f); }} />
-            </div>
-          </CardContent>
-        </Card>
+            </CardHeader>
+            <CardContent>
+              <div
+                onDrop={onDrop}
+                onDragOver={(e) => e.preventDefault()}
+                onClick={() => step === "pick" && inputRef.current?.click()}
+                className={`border-2 border-dashed rounded-lg p-10 text-center transition-colors ${step === "pick" ? "cursor-pointer hover:border-primary hover:bg-primary/5" : "border-border bg-muted/20"
+                  }`}
+              >
+                <FileUp className="w-10 h-10 mx-auto text-muted-foreground mb-3" />
+                {step === "pick" ? (
+                  <>
+                    <p className="text-sm">Drop your CSV here or <span className="text-primary font-semibold cursor-pointer">click to browse</span></p>
+                    <p className="text-xs text-muted-foreground mt-1">.csv only. Max 50MB</p>
+                  </>
+                ) : (
+                  <p className="text-sm text-muted-foreground">File loaded — see column mapping below</p>
+                )}
+                <input ref={inputRef} type="file" accept=".csv" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) parseCSV(f); }} />
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Step 2 — Column Mapping + preview */}
-        {(step === "map" || step === "processing" || step === "done") && (
+        {(step === "map" || step === "processing") && (
           <Card>
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
@@ -249,14 +300,12 @@ export default function Upload() {
               <div className="w-10 h-10 border-4 border-border border-t-primary rounded-full animate-spin mx-auto" />
               <p className="font-semibold">Processing reviews…</p>
 
-              {/* {total > 0 && ( */}
               <>
                 <div className="w-56 bg-muted rounded-full h-2 overflow-hidden m-auto">
-                  <div className="h-full bg-primary rounded-full transition-all duration-500 origin-left" style={{ width: `${(processed / total) * 100}%` }} />
+                  <div className="h-full bg-primary rounded-full transition-all duration-500 origin-left" style={{ width: `${total > 0 ? (processed / total) * 100 : 0}%` }} />
                 </div>
                 <p className="text-xs font-number text-muted-foreground mt-1">{processed} / {total}</p>
               </>
-              {/* )} */}
             </CardContent>
           </Card>
         )}
@@ -266,8 +315,15 @@ export default function Upload() {
             <CardContent className="py-8 text-center space-y-3">
               <CheckCircle2 className="w-12 h-12 text-green-500 mx-auto" />
               <p className="font-semibold text-lg">Analysis Complete</p>
-              <p className="text-sm text-muted-foreground">{total} reviews processed and ready for analysis.</p>
-              <Button onClick={() => navigate("/")} className="mt-2">View Dashboard →</Button>
+              <p className="text-sm text-muted-foreground">
+                {session.totalReviews || total} reviews · {session.filename || "CSV"} · {session.uploadedAt ? new Date(session.uploadedAt).toLocaleDateString() : ""}
+              </p>
+              <div className="flex items-center justify-center gap-3 mt-2">
+                <Button onClick={() => navigate("/")} className="">View Dashboard →</Button>
+                <Button variant="outline" onClick={handleNewSession} className="gap-2">
+                  <RotateCcw className="w-3.5 h-3.5" />Start New Session
+                </Button>
+              </div>
             </CardContent>
           </Card>
         )}

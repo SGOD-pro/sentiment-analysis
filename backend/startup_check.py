@@ -23,8 +23,6 @@ from logger import get_logger
 log = get_logger(__name__)
 
 # Schema required to create tables if missing.
-# ponytail: kept in sync with conftest.py; extracting to config would be cleaner
-#           but is out of scope for this diagnostic.
 _TABLE_SCHEMAS = {
     "reviews": {
         "KeySchema": [{"AttributeName": "review_id", "KeyType": "HASH"}],
@@ -32,9 +30,8 @@ _TABLE_SCHEMAS = {
             {"AttributeName": "review_id", "AttributeType": "S"},
             {"AttributeName": "batch_id", "AttributeType": "S"},
             {"AttributeName": "sentiment", "AttributeType": "S"},
-            {"AttributeName": "category", "AttributeType": "S"},
-            {"AttributeName": "review_date", "AttributeType": "S"},
-            {"AttributeName": "issue_tag", "AttributeType": "S"},
+            {"AttributeName": "batch_cat_sort", "AttributeType": "S"},
+            {"AttributeName": "batch_issue_sort", "AttributeType": "S"},
         ],
         "GlobalSecondaryIndexes": [
             {
@@ -46,18 +43,18 @@ _TABLE_SCHEMAS = {
                 "Projection": {"ProjectionType": "ALL"},
             },
             {
-                "IndexName": "category-date-index",
+                "IndexName": "batch-category-index",
                 "KeySchema": [
-                    {"AttributeName": "category", "KeyType": "HASH"},
-                    {"AttributeName": "review_date", "KeyType": "RANGE"},
+                    {"AttributeName": "batch_id", "KeyType": "HASH"},
+                    {"AttributeName": "batch_cat_sort", "KeyType": "RANGE"},
                 ],
                 "Projection": {"ProjectionType": "ALL"},
             },
             {
-                "IndexName": "issue-date-index",
+                "IndexName": "batch-issue-index",
                 "KeySchema": [
-                    {"AttributeName": "issue_tag", "KeyType": "HASH"},
-                    {"AttributeName": "review_date", "KeyType": "RANGE"},
+                    {"AttributeName": "batch_id", "KeyType": "HASH"},
+                    {"AttributeName": "batch_issue_sort", "KeyType": "RANGE"},
                 ],
                 "Projection": {"ProjectionType": "ALL"},
             },
@@ -73,12 +70,12 @@ _TABLE_SCHEMAS = {
     },
     "aggregates": {
         "KeySchema": [
-            {"AttributeName": "agg_key", "KeyType": "HASH"},
-            {"AttributeName": "metric", "KeyType": "RANGE"},
+            {"AttributeName": "batch_id", "KeyType": "HASH"},
+            {"AttributeName": "agg_type", "KeyType": "RANGE"},
         ],
         "AttributeDefinitions": [
-            {"AttributeName": "agg_key", "AttributeType": "S"},
-            {"AttributeName": "metric", "AttributeType": "S"},
+            {"AttributeName": "batch_id", "AttributeType": "S"},
+            {"AttributeName": "agg_type", "AttributeType": "S"},
         ],
         "BillingMode": "PAY_PER_REQUEST",
     },

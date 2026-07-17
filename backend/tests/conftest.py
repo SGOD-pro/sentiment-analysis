@@ -17,6 +17,7 @@ os.environ["AWS_ACCESS_KEY_ID"] = "testing"
 os.environ["AWS_SECRET_ACCESS_KEY"] = "testing"
 os.environ["AWS_SECURITY_TOKEN"] = "testing"
 os.environ["AWS_SESSION_TOKEN"] = "testing"
+os.environ["AWS_ENDPOINT_URL"] = ""  # clear so moto intercepts (not LocalStack)
 os.environ["DYNAMODB_REVIEWS_TABLE"] = "Reviews"
 os.environ["DYNAMODB_BATCHES_TABLE"] = "Batches"
 os.environ["DYNAMODB_AGGREGATES_TABLE"] = "Aggregates"
@@ -39,9 +40,8 @@ def aws_mock():
                 {"AttributeName": "review_id", "AttributeType": "S"},
                 {"AttributeName": "batch_id", "AttributeType": "S"},
                 {"AttributeName": "sentiment", "AttributeType": "S"},
-                {"AttributeName": "category", "AttributeType": "S"},
-                {"AttributeName": "review_date", "AttributeType": "S"},
-                {"AttributeName": "issue_tag", "AttributeType": "S"},
+                {"AttributeName": "batch_cat_sort", "AttributeType": "S"},
+                {"AttributeName": "batch_issue_sort", "AttributeType": "S"},
             ],
             GlobalSecondaryIndexes=[
                 {
@@ -53,18 +53,18 @@ def aws_mock():
                     "Projection": {"ProjectionType": "ALL"},
                 },
                 {
-                    "IndexName": "category-date-index",
+                    "IndexName": "batch-category-index",
                     "KeySchema": [
-                        {"AttributeName": "category", "KeyType": "HASH"},
-                        {"AttributeName": "review_date", "KeyType": "RANGE"},
+                        {"AttributeName": "batch_id", "KeyType": "HASH"},
+                        {"AttributeName": "batch_cat_sort", "KeyType": "RANGE"},
                     ],
                     "Projection": {"ProjectionType": "ALL"},
                 },
                 {
-                    "IndexName": "issue-date-index",
+                    "IndexName": "batch-issue-index",
                     "KeySchema": [
-                        {"AttributeName": "issue_tag", "KeyType": "HASH"},
-                        {"AttributeName": "review_date", "KeyType": "RANGE"},
+                        {"AttributeName": "batch_id", "KeyType": "HASH"},
+                        {"AttributeName": "batch_issue_sort", "KeyType": "RANGE"},
                     ],
                     "Projection": {"ProjectionType": "ALL"},
                 },
@@ -84,12 +84,12 @@ def aws_mock():
         ddb.create_table(
             TableName="Aggregates",
             KeySchema=[
-                {"AttributeName": "agg_key", "KeyType": "HASH"},
-                {"AttributeName": "metric", "KeyType": "RANGE"},
+                {"AttributeName": "batch_id", "KeyType": "HASH"},
+                {"AttributeName": "agg_type", "KeyType": "RANGE"},
             ],
             AttributeDefinitions=[
-                {"AttributeName": "agg_key", "AttributeType": "S"},
-                {"AttributeName": "metric", "AttributeType": "S"},
+                {"AttributeName": "batch_id", "AttributeType": "S"},
+                {"AttributeName": "agg_type", "AttributeType": "S"},
             ],
             BillingMode="PAY_PER_REQUEST",
         )
@@ -98,14 +98,17 @@ def aws_mock():
         s3 = boto3.client("s3", region_name="us-east-1")
         s3.create_bucket(Bucket="test-bucket")
 
-        # Reset cached table refs so they pick up mocked resources
+        # Reset cached settings + table refs so they pick up mocked resources
+        from config import get_settings
         from database import reset_tables
 
+        get_settings.cache_clear()
         reset_tables()
 
         yield ddb
 
         reset_tables()
+        get_settings.cache_clear()
 
 
 @pytest.fixture

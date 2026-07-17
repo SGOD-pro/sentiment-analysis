@@ -183,14 +183,16 @@ Table: Reviews
     PK: batch_id   SK: sentiment
     -- batch-scoped review feed filtered by sentiment
 
-  GSI2 (category-date-index):
-    PK: category   SK: review_date
-    -- category + date-range queries, feeds trends/category endpoints
+  GSI2 (batch-category-index):
+    PK: batch_id   SK: category#review_date  (composite, e.g. "Electronics#2025-01-15")
+    -- category + date-range queries WITHIN one session only
+    -- replaces the old global category-date-index, which had no batch_id
+    -- in its key and was the root cause of cross-session data leakage
 
-  GSI3 (issue-date-index):
-    PK: issue_tag   SK: review_date
+  GSI3 (batch-issue-index):
+    PK: batch_id   SK: issue_tag#review_date
     -- sparse index: only items with issue_tag set (negative reviews)
-    -- feeds issue distribution endpoint
+    -- feeds issue distribution endpoint, scoped to one session
 
 Table: Batches
   PK: batch_id (S, UUID)
@@ -203,17 +205,41 @@ Table: Batches
     status                  S    -- pending / processing / done / failed
 
 Table: Aggregates
-  PK: agg_key (S)   -- e.g. "TREND#Electronics#2025-W03"
-  SK: metric (S)    -- "negative" / "neutral" / "positive" / "count"
+  PK: batch_id (S)
+  SK: agg_type (S)   -- e.g. "TREND#Electronics#2025-W03" / "CAT#Electronics" / "ISSUE#login_timeout#2025-W03"
 
   Attributes:
-    value        N
+    negative      N
+    neutral       N
+    positive      N
     updated_at    S
 
   -- Populated incrementally: DynamoDB Stream on Reviews -> small Lambda
-  -- increments the relevant agg_key/metric counter on every write.
+  -- increments the relevant batch_id/agg_type counter on every write.
   -- This is what /api/trends, /api/categories/summary, and
   -- /api/issues/distribution actually read from — never a table scan.
+  --
+  -- SCHEMA NOTE: previous version keyed this table as
+  -- PK agg_key ("TREND#{category}#{week}") with no batch_id anywhere in
+  -- the key. Every upload wrote into the same permanent bucket, so
+  -- aggregates accumulated across sessions indefinitely — this was the
+  -- actual cause of "old CSV results showing up in new dashboards,"
+  -- not a missing frontend filter. batch_id as the partition key fixes
+  -- it at the schema level: it's structurally impossible to read another
+  -- session's aggregates without the S3/Reviews backfill script below.
+
+S3 — one prefix per batch, nothing shared across sessions:
+
+  uploads/{batch_id}/original.csv
+  uploads/{batch_id}/column_mapping.json
+
+Backfill: the dashboard hasn't shipped yet, so there's no real user data to
+preserve in the old Aggregates schema. Don't migrate the corrupted
+cross-session buckets — drop the table, recreate with the batch_id-keyed
+schema above, then run a one-time script that scans the Reviews table
+(already has batch_id per row) and rebuilds Aggregates under the new
+PK/SK. Update the Reviews-stream Lambda's increment logic to match going
+forward.
 ```
 
 ---

@@ -115,5 +115,5 @@ def test_upload_stores_csv_in_s3(client):
     batch_id = resp.json()["data"]["batch_id"]
 
     s3 = boto3.client("s3", region_name="us-east-1")
-    obj = s3.get_object(Bucket="test-bucket", Key=f"uploads/{batch_id}.csv")
+    obj = s3.get_object(Bucket="test-bucket", Key=f"uploads/{batch_id}/original.csv")
     assert obj["Body"].read().decode() == content

@@ -72,7 +72,7 @@ def reset_all_data():
     counts = {}
     counts["reviews"] = _wipe_table(tables.reviews, [{"AttributeName": "review_id"}])
     counts["batches"] = _wipe_table(tables.batches, [{"AttributeName": "batch_id"}])
-    counts["aggregates"] = _wipe_table(tables.aggregates, [{"AttributeName": "agg_key"}, {"AttributeName": "metric"}])
+    counts["aggregates"] = _wipe_table(tables.aggregates, [{"AttributeName": "batch_id"}, {"AttributeName": "agg_type"}])
 
     log.info("data reset", extra={"deleted": counts})
     return ApiResponse(success=True, data={"deleted": counts})

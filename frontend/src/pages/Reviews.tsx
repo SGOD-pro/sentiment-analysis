@@ -2,8 +2,10 @@
  * Reviews page — matches Stitch "SentiMetric | Reviews (v2)" screen.
  * Card-based feed, sidebar filters, search bar, pagination.
  * All column labels from loadColumnMap() — never hardcoded.
+ * All API calls scoped to batchId from useSessionStore.
  */
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -14,9 +16,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
 import { Slider } from "@/components/ui/slider";
-import { ChevronDown, ChevronRight, Clock, Filter, Search } from "lucide-react";
+import { ChevronDown, ChevronRight, Clock, Filter, Search, Upload } from "lucide-react";
 import { getCategoriesSummary, getIssuesDistribution, getReviews } from "@/api/client";
 import { loadColumnMap } from "@/hooks/useColumnMap";
+import { useSessionStore } from "@/hooks/useSessionStore";
 import type { CategorySummary, IssueCount, Review, ReviewFilters } from "@/types";
 import { DashboardPage } from "@/components/dashboard-layout";
 
@@ -45,10 +48,9 @@ function ReviewCard({ review, colMap, onClick }: {
   onClick: () => void;
 }) {
   return (
-    <Card onClick={onClick} className={`cursor-pointer hover:shadow-md transition-shadow duration-200 border-border ${
-      review.sentiment === "positive" ? "bg-green-500/5" :
-      review.sentiment === "negative" ? "bg-destructive/5" : "bg-muted/20"
-    }`}>
+    <Card onClick={onClick} className={`cursor-pointer hover:shadow-md transition-shadow duration-200 border-border ${review.sentiment === "positive" ? "bg-green-500/5" :
+        review.sentiment === "negative" ? "bg-destructive/5" : "bg-muted/20"
+      }`}>
       <CardContent className="">
         {/* Top row */}
         <div className="flex items-center justify-between mb-3">
@@ -60,7 +62,7 @@ function ReviewCard({ review, colMap, onClick }: {
               <Badge variant="secondary" className="text-xs font-normal">{review.category}</Badge>
             )}
             {review.review_date && (
-              <span className="text-xs text-muted-foreground flex items-center gap-1"><Clock size={10} className="mb-0.5"/> {review.review_date}</span>
+              <span className="text-xs text-muted-foreground flex items-center gap-1"><Clock size={10} className="mb-0.5" /> {review.review_date}</span>
             )}
           </div>
           <div className="text-right">
@@ -90,6 +92,8 @@ function ReviewCard({ review, colMap, onClick }: {
 
 export default function Reviews() {
   const colMap = loadColumnMap();
+  const batchId = useSessionStore((s) => s.batchId);
+  const navigate = useNavigate();
   const [reviews, setReviews] = useState<Review[]>([]);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
@@ -108,24 +112,39 @@ export default function Reviews() {
   const [issueOptions, setIssueOptions] = useState<IssueCount[]>([]);
 
   useEffect(() => {
-    getCategoriesSummary().then((r) => { if (r.data) setCatOptions(r.data.categories); });
-    getIssuesDistribution().then((r) => { if (r.data) setIssueOptions(r.data.issues); });
-  }, []);
+    if (!batchId) { setLoading(false); return; }
+    getCategoriesSummary(batchId).then((r) => { if (r.data) setCatOptions(r.data.categories); });
+    getIssuesDistribution(batchId).then((r) => { if (r.data) setIssueOptions(r.data.issues); });
+  }, [batchId]);
 
   useEffect(() => {
+    if (!batchId) { setLoading(false); return; }
     setLoading(true);
     const f: ReviewFilters = { page, limit: 25 };
     if (sentiment !== "all") f.sentiment = sentiment;
     if (category !== "all") f.category = category;
     if (issueTag !== "all") f.issue_tag = issueTag;
 
-    getReviews(f).then((r) => {
+    getReviews(batchId, f).then((r) => {
       if (!r.success) { toast.error(r.message ?? "Failed to load reviews"); return; }
       setReviews(r.data?.reviews ?? []);
       setTotal(r.data?.total ?? 0);
       setTotalPages(r.data?.total_pages ?? 1);
     }).finally(() => setLoading(false));
-  }, [page, sentiment, category, issueTag, minConf]);
+  }, [batchId, page, sentiment, category, issueTag, minConf]);
+
+  if (!batchId) {
+    return (
+      <DashboardPage sidebar={<div className="p-5"><p className="text-xs text-muted-foreground">No active session</p></div>}>
+        <div className="flex-1 flex flex-col items-center justify-center gap-4 p-10 text-center">
+          <Upload className="w-16 h-16 text-muted-foreground/30" />
+          <h2 className="text-xl font-semibold">No data loaded</h2>
+          <p className="text-sm text-muted-foreground">Upload a CSV to browse reviews.</p>
+          <Button onClick={() => navigate("/upload")} className="gap-2"><Upload className="w-4 h-4" />Import Data</Button>
+        </div>
+      </DashboardPage>
+    );
+  }
 
   const filtered = minConf > 0
     ? reviews.filter((r) => Number(r.confidence_margin) >= minConf)
@@ -215,8 +234,8 @@ export default function Reviews() {
         {loading
           ? Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-36 w-full rounded-xl" />)
           : filtered.length === 0
-          ? <p className="text-center text-muted-foreground py-16">No reviews match your filters.</p>
-          : filtered.map((r) => (
+            ? <p className="text-center text-muted-foreground py-16">No reviews match your filters.</p>
+            : filtered.map((r) => (
               <ReviewCard key={r.review_id} review={r} colMap={colMap} onClick={() => setSelected(r)} />
             ))}
       </div>

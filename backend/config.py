@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     dynamodb_batches_table: str = "Batches"
     dynamodb_aggregates_table: str = "Aggregates"
 
+    # Redis (optional — app works without it)
+    redis_url: str = "redis://localhost:6379/0"
+
     # S3
     s3_bucket: str = "review-uploads"
 

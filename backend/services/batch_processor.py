@@ -13,6 +13,7 @@ Example:
 
 import csv
 import io
+import json
 import uuid
 from datetime import datetime, timezone
 
@@ -61,7 +62,7 @@ def process_batch(batch_id: str) -> None:
     )
 
     # Read CSV from S3
-    obj = s3.get_object(Bucket=settings.s3_bucket, Key=f"uploads/{batch_id}.csv")
+    obj = s3.get_object(Bucket=settings.s3_bucket, Key=f"uploads/{batch_id}/original.csv")
     csv_text = obj["Body"].read().decode("utf-8")
 
     col_map = batch["column_mapping"]
@@ -69,8 +70,19 @@ def process_batch(batch_id: str) -> None:
     category_col = col_map.get("category_col")
     date_col = col_map.get("date_col")
 
+    # Store column mapping as JSON alongside CSV
+    s3.put_object(
+        Bucket=settings.s3_bucket,
+        Key=f"uploads/{batch_id}/column_mapping.json",
+        Body=json.dumps(col_map).encode(),
+    )
+
     reader = csv.DictReader(io.StringIO(csv_text))
     rows = list(reader)
+
+    # Collect aggregates in memory, write once per batch
+    # Key: agg_type string, Value: {positive, neutral, negative} or {count}
+    agg_accum: dict[str, dict[str, int]] = {}
 
     # Process in chunks
     chunk_size = settings.lambda_batch_size
@@ -91,7 +103,7 @@ def process_batch(batch_id: str) -> None:
             )
             continue
 
-        # Write results to Reviews table and update aggregates
+        # Write results to Reviews table and accumulate aggregates
         for row, result in zip(chunk, results):
             review_id = str(uuid.uuid4())
             category = row.get(category_col, "") if category_col else ""
@@ -112,6 +124,8 @@ def process_batch(batch_id: str) -> None:
                 "prob_negative": str(result.get("sentiment_probabilities", {}).get("negative", 0)),
                 "prob_neutral": str(result.get("sentiment_probabilities", {}).get("neutral", 0)),
                 "prob_positive": str(result.get("sentiment_probabilities", {}).get("positive", 0)),
+                # Composite sort keys for batch-scoped GSIs
+                "batch_cat_sort": f"{category}#{review_date}",
             }
 
             # Store all original CSV columns as extra_columns
@@ -123,14 +137,16 @@ def process_batch(batch_id: str) -> None:
                 item["issue_tag"] = result["issue_tag"]
                 item["issue_distance"] = str(result.get("issue_distance", 0))
                 item["cluster_source"] = result.get("cluster_source", "cross_category_fallback")
+                # Sparse GSI sort key — only on negative reviews with issue tags
+                item["batch_issue_sort"] = f"{result['issue_tag']}#{review_date}"
 
             tables.reviews.put_item(Item=item)
 
-            # Increment aggregates
-            _increment_aggregate(tables, f"TREND#{category}#{week}", sentiment)
-            _increment_aggregate(tables, f"CAT#{category}", sentiment)
+            # Accumulate aggregates
+            _accum_aggregate(agg_accum, f"TREND#{category}#{week}", sentiment)
+            _accum_aggregate(agg_accum, f"CAT#{category}", sentiment)
             if result.get("issue_tag"):
-                _increment_aggregate(tables, f"ISSUE#{result['issue_tag']}#{week}", "count")
+                _accum_aggregate(agg_accum, f"ISSUE#{result['issue_tag']}#{week}", "count")
 
             processed += 1
 
@@ -140,6 +156,9 @@ def process_batch(batch_id: str) -> None:
             UpdateExpression="SET processed_count = :c",
             ExpressionAttributeValues={":c": processed},
         )
+
+    # Flush accumulated aggregates to DynamoDB
+    _flush_aggregates(tables, batch_id, agg_accum)
 
     # Final status
     final_status = "done" if processed > 0 else "failed"
@@ -161,14 +180,18 @@ def process_batch(batch_id: str) -> None:
     )
 
 
-def _increment_aggregate(tables, agg_key: str, metric: str) -> None:
-    """Increment a counter in the Aggregates table."""
-    tables.aggregates.update_item(
-        Key={"agg_key": agg_key, "metric": metric},
-        UpdateExpression="ADD #v :inc SET updated_at = :ts",
-        ExpressionAttributeNames={"#v": "value"},
-        ExpressionAttributeValues={
-            ":inc": 1,
-            ":ts": datetime.now(timezone.utc).isoformat(),
-        },
-    )
+def _accum_aggregate(accum: dict, agg_type: str, metric: str) -> None:
+    """Accumulate a count in-memory before flushing."""
+    if agg_type not in accum:
+        accum[agg_type] = {}
+    accum[agg_type][metric] = accum[agg_type].get(metric, 0) + 1
+
+
+def _flush_aggregates(tables, batch_id: str, accum: dict) -> None:
+    """Write all accumulated aggregates to DynamoDB in batch."""
+    ts = datetime.now(timezone.utc).isoformat()
+    for agg_type, metrics in accum.items():
+        item = {"batch_id": batch_id, "agg_type": agg_type, "updated_at": ts}
+        for metric, value in metrics.items():
+            item[metric] = value
+        tables.aggregates.put_item(Item=item)

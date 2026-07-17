@@ -109,7 +109,7 @@ async def upload_csv(
     s3 = get_s3_client()
     s3.put_object(
         Bucket=settings.s3_bucket,
-        Key=f"uploads/{batch_id}.csv",
+        Key=f"uploads/{batch_id}/original.csv",
         Body=raw,
     )
 

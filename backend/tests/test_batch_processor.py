@@ -21,7 +21,7 @@ def _seed_batch(aws_mock, batch_id="test-batch-1", csv_content=None, column_mapp
         column_mapping = {"text_col": "text", "category_col": "category", "date_col": "date"}
 
     s3 = boto3.client("s3", region_name="us-east-1")
-    s3.put_object(Bucket="test-bucket", Key=f"uploads/{batch_id}.csv", Body=csv_content.encode())
+    s3.put_object(Bucket="test-bucket", Key=f"uploads/{batch_id}/original.csv", Body=csv_content.encode())
 
     table = aws_mock.Table("Batches")
     reader = csv.DictReader(io.StringIO(csv_content))
@@ -84,7 +84,7 @@ def test_batch_completes_successfully(aws_mock):
 
 
 def test_batch_updates_aggregates(aws_mock):
-    """Aggregates table should have trend, category, and issue counters."""
+    """Aggregates table should have trend, category, and issue counters keyed by batch_id."""
     batch_id = _seed_batch(aws_mock)
 
     with patch("services.batch_processor.invoke_lambda", side_effect=_fake_invoke):
@@ -93,11 +93,14 @@ def test_batch_updates_aggregates(aws_mock):
 
     agg_table = aws_mock.Table("Aggregates")
     scan = agg_table.scan()
-    agg_keys = {item["agg_key"] for item in scan["Items"]}
+    agg_types = {item["agg_type"] for item in scan["Items"]}
+    batch_ids = {item["batch_id"] for item in scan["Items"]}
 
-    assert any(k.startswith("TREND#") for k in agg_keys)
-    assert any(k.startswith("CAT#") for k in agg_keys)
-    assert any(k.startswith("ISSUE#") for k in agg_keys)
+    # All aggregates should be scoped to this batch
+    assert batch_ids == {batch_id}
+    assert any(k.startswith("TREND#") for k in agg_types)
+    assert any(k.startswith("CAT#") for k in agg_types)
+    assert any(k.startswith("ISSUE#") for k in agg_types)
 
 
 def test_lambda_timeout_partial_recovery(aws_mock):
