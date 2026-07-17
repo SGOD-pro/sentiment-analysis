@@ -11,7 +11,7 @@ import { Separator } from "@/components/ui/separator";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
-import { Trash2, Plus, Power } from "lucide-react";
+import { Trash2, Plus, Power, ArrowRight, ArrowLeft } from "lucide-react";
 
 interface Rule { id: string; name: string; level: string; desc: string; threshold: number; enabled: boolean; }
 
@@ -42,9 +42,14 @@ export default function Settings() {
   return (
     <div className="pt-14 min-h-screen">
       <main className="max-w-5xl mx-auto p-6 space-y-6">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Global Settings</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">Configure system thresholds and automated notification rules for the sentiment engine.</p>
+        <div className="flex items-center gap-4">
+          <Button variant="outline" size="icon" onClick={() => window.history.back()} className="shrink-0 fixed top-4 left-4 md:top-8 md:left-8">
+            <ArrowLeft className="w-5 h-5" />
+          </Button>
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight">Global Settings</h1>
+            <p className="text-sm text-muted-foreground mt-0.5">Configure system thresholds and automated notification rules for the sentiment engine.</p>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">

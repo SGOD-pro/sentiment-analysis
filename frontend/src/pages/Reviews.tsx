@@ -14,10 +14,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
 import { Slider } from "@/components/ui/slider";
-import { ChevronDown, ChevronRight, Filter, Search } from "lucide-react";
+import { ChevronDown, ChevronRight, Clock, Filter, Search } from "lucide-react";
 import { getCategoriesSummary, getIssuesDistribution, getReviews } from "@/api/client";
 import { loadColumnMap } from "@/hooks/useColumnMap";
 import type { CategorySummary, IssueCount, Review, ReviewFilters } from "@/types";
+import { DashboardPage } from "@/components/dashboard-layout";
 
 const SENT_STYLE: Record<string, string> = {
   positive: "chip-positive",
@@ -48,7 +49,7 @@ function ReviewCard({ review, colMap, onClick }: {
       review.sentiment === "positive" ? "bg-green-500/5" :
       review.sentiment === "negative" ? "bg-destructive/5" : "bg-muted/20"
     }`}>
-      <CardContent className="pt-4 pb-4">
+      <CardContent className="">
         {/* Top row */}
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2 flex-wrap">
@@ -59,7 +60,7 @@ function ReviewCard({ review, colMap, onClick }: {
               <Badge variant="secondary" className="text-xs font-normal">{review.category}</Badge>
             )}
             {review.review_date && (
-              <span className="text-xs text-muted-foreground flex items-center gap-1">🕐 {review.review_date}</span>
+              <span className="text-xs text-muted-foreground flex items-center gap-1"><Clock size={10} className="mb-0.5"/> {review.review_date}</span>
             )}
           </div>
           <div className="text-right">
@@ -132,110 +133,108 @@ export default function Reviews() {
 
   const pageNums = Array.from({ length: Math.min(totalPages, 5) }, (_, i) => i + 1);
 
-  return (
-    <div className="flex pt-14 min-h-screen">
-      {/* Sidebar */}
-      <aside className="fixed left-0 top-14 h-[calc(100vh-56px)] w-60 border-r border-border bg-card flex flex-col p-5 gap-2 z-40 hidden md:flex">
-        <div className="flex items-center gap-2 pb-1">
-          <Filter className="w-4 h-4 text-primary" />
-          <span className="font-semibold text-sm">Filters</span>
-        </div>
-        <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Analysis Parameters</p>
-        <Separator />
+  const reviewsSidebar = (
+    <div className="flex flex-col p-5 gap-2 h-full">
+      <div className="flex items-center gap-2 pb-1">
+        <Filter className="w-4 h-4 text-primary" />
+        <span className="font-semibold text-sm">Filters</span>
+      </div>
+      <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Analysis Parameters</p>
+      <Separator />
 
-        <div className="flex-1 overflow-y-auto space-y-1 pr-1">
-          <FilterSection label="Date Range"><p className="text-xs text-muted-foreground">Coming soon</p></FilterSection>
-          {colMap.catCol && (
-            <FilterSection label={colMap.catCol} defaultOpen>
-              <Select value={category} onValueChange={(v) => { setCategory(v); setPage(1); }}>
-                <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All</SelectItem>
-                  {catOptions.map((c) => <SelectItem key={c.category} value={c.category}>{c.category}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </FilterSection>
-          )}
-          <FilterSection label="Sentiment" defaultOpen>
-            <Select value={sentiment} onValueChange={(v) => { setSentiment(v); setPage(1); }}>
+      <div className="flex-1 overflow-y-auto space-y-1 pr-1">
+        <FilterSection label="Date Range"><p className="text-xs text-muted-foreground">Coming soon</p></FilterSection>
+        {colMap.catCol && (
+          <FilterSection label={colMap.catCol} defaultOpen>
+            <Select value={category} onValueChange={(v) => { setCategory(v); setPage(1); }}>
               <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All</SelectItem>
-                <SelectItem value="positive">Positive</SelectItem>
-                <SelectItem value="neutral">Neutral</SelectItem>
-                <SelectItem value="negative">Negative</SelectItem>
+                {catOptions.map((c) => <SelectItem key={c.category} value={c.category}>{c.category}</SelectItem>)}
               </SelectContent>
             </Select>
           </FilterSection>
-          <FilterSection label="Issue Tag">
-            <Select value={issueTag} onValueChange={(v) => { setIssueTag(v); setPage(1); }}>
-              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Any</SelectItem>
-                {issueOptions.map((i) => <SelectItem key={i.issue_tag} value={i.issue_tag}>{i.issue_tag.replaceAll("_", " ")}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </FilterSection>
-          <FilterSection label="Confidence">
-            <Slider min={0} max={1} step={0.05} value={[minConf]} onValueChange={([v]) => setMinConf(v)} className="w-full" />
-            <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
-              <span>0%</span><span>{Math.round(minConf * 100)}%</span>
-            </div>
-          </FilterSection>
-        </div>
-
-        <Button className="w-full mt-auto" onClick={() => setPage(1)}>Apply Filters</Button>
-      </aside>
-
-      {/* Main */}
-      <main className="md:pl-60 flex-1 p-6">
-        {/* Page header */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-6">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Review Feed</h1>
-            <p className="text-sm text-muted-foreground">Analyze real-time sentiment data</p>
-          </div>
-          <div className="flex gap-2">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input className="pl-9 w-56 h-9 text-sm" placeholder="Search reviews…" readOnly title="Search coming soon" />
-            </div>
-            <Select defaultValue="recent">
-              <SelectTrigger className="h-9 w-36 text-sm"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="recent">Most Recent</SelectItem>
-                <SelectItem value="confidence">By Confidence</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-
-        {/* Review cards */}
-        <div className="space-y-4">
-          {loading
-            ? Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-36 w-full rounded-xl" />)
-            : filtered.length === 0
-            ? <p className="text-center text-muted-foreground py-16">No reviews match your filters.</p>
-            : filtered.map((r) => (
-                <ReviewCard key={r.review_id} review={r} colMap={colMap} onClick={() => setSelected(r)} />
-              ))}
-        </div>
-
-        {/* Pagination */}
-        {totalPages > 1 && (
-          <div className="flex items-center justify-between mt-6">
-            <p className="text-xs text-muted-foreground">Showing {((page - 1) * 25) + 1}–{Math.min(page * 25, total)} of {total.toLocaleString()} reviews</p>
-            <div className="flex gap-1">
-              <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>‹</Button>
-              {pageNums.map((n) => (
-                <Button key={n} variant={n === page ? "default" : "outline"} size="sm" onClick={() => setPage(n)}>{n}</Button>
-              ))}
-              {totalPages > 5 && <><span className="px-2 py-1 text-sm text-muted-foreground">…</span><Button variant="outline" size="sm" onClick={() => setPage(totalPages)}>{totalPages}</Button></>}
-              <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>›</Button>
-            </div>
-          </div>
         )}
-      </main>
+        <FilterSection label="Sentiment" defaultOpen>
+          <Select value={sentiment} onValueChange={(v) => { setSentiment(v); setPage(1); }}>
+            <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All</SelectItem>
+              <SelectItem value="positive">Positive</SelectItem>
+              <SelectItem value="neutral">Neutral</SelectItem>
+              <SelectItem value="negative">Negative</SelectItem>
+            </SelectContent>
+          </Select>
+        </FilterSection>
+        <FilterSection label="Issue Tag">
+          <Select value={issueTag} onValueChange={(v) => { setIssueTag(v); setPage(1); }}>
+            <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Any</SelectItem>
+              {issueOptions.map((i) => <SelectItem key={i.issue_tag} value={i.issue_tag}>{i.issue_tag.replaceAll("_", " ")}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </FilterSection>
+        <FilterSection label="Confidence">
+          <Slider min={0} max={1} step={0.05} value={[minConf]} onValueChange={([v]) => setMinConf(v)} className="w-full" />
+          <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
+            <span>0%</span><span>{Math.round(minConf * 100)}%</span>
+          </div>
+        </FilterSection>
+      </div>
+
+      <Button className="w-full mt-auto" onClick={() => setPage(1)}>Apply Filters</Button>
+    </div>
+  );
+
+  return (
+    <DashboardPage sidebar={reviewsSidebar}>
+      {/* Page header */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-6">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Review Feed</h1>
+          <p className="text-sm text-muted-foreground">Analyze real-time sentiment data</p>
+        </div>
+        <div className="flex gap-2">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <Input className="pl-9 w-56 h-9 text-sm" placeholder="Search reviews…" readOnly title="Search coming soon" />
+          </div>
+          <Select defaultValue="recent">
+            <SelectTrigger className="h-9 w-36 text-sm"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="recent">Most Recent</SelectItem>
+              <SelectItem value="confidence">By Confidence</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      {/* Review cards */}
+      <div className="space-y-4">
+        {loading
+          ? Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-36 w-full rounded-xl" />)
+          : filtered.length === 0
+          ? <p className="text-center text-muted-foreground py-16">No reviews match your filters.</p>
+          : filtered.map((r) => (
+              <ReviewCard key={r.review_id} review={r} colMap={colMap} onClick={() => setSelected(r)} />
+            ))}
+      </div>
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between mt-6">
+          <p className="text-xs text-muted-foreground">Showing {((page - 1) * 25) + 1}–{Math.min(page * 25, total)} of {total.toLocaleString()} reviews</p>
+          <div className="flex gap-1">
+            <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>‹</Button>
+            {pageNums.map((n) => (
+              <Button key={n} variant={n === page ? "default" : "outline"} size="sm" onClick={() => setPage(n)}>{n}</Button>
+            ))}
+            {totalPages > 5 && <><span className="px-2 py-1 text-sm text-muted-foreground">…</span><Button variant="outline" size="sm" onClick={() => setPage(totalPages)}>{totalPages}</Button></>}
+            <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>›</Button>
+          </div>
+        </div>
+      )}
 
       {/* Detail dialog */}
       <Dialog open={!!selected} onOpenChange={(o) => !o && setSelected(null)}>
@@ -265,6 +264,6 @@ export default function Reviews() {
           )}
         </DialogContent>
       </Dialog>
-    </div>
+    </DashboardPage>
   );
 }

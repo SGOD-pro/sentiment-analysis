@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { CheckCircle2, FileUp, Zap, AlertCircle } from "lucide-react";
+import { CheckCircle2, FileUp, Zap, AlertCircle, ArrowLeft } from "lucide-react";
 import { getBatchStatus, uploadCSV } from "@/api/client";
 import { saveColumnMap } from "@/hooks/useColumnMap";
 
@@ -39,11 +39,22 @@ export default function Upload() {
       const text = e.target?.result as string;
       const lines = text.split("\n").filter((l) => l.trim());
       if (lines.length < 2) { toast.error("CSV must have at least 2 rows"); return; }
-      const hdrs = lines[0].split(",").map((h) => h.trim().replace(/^"|"$/g, ""));
-      const rows = lines.slice(1, 6).map((l) => l.split(",").map((c) => c.trim().replace(/^"|"$/g, "")));
+      // Regex splits on commas that are outside of double quotes
+      const csvSplit = /,(?=(?:(?:[^"]*"){2})*[^"]*$)/;
+      const hdrs = lines[0].split(csvSplit).map((h) => h.trim().replace(/^"|"$/g, ""));
+      const rows = lines.slice(1, 6).map((l) => l.split(csvSplit).map((c) => c.trim().replace(/^"|"$/g, "")));
       setHeaders(hdrs);
       setPreview(rows);
-      setTextCol(hdrs[0]);
+
+      // Auto-detect columns based on lowercase names
+      const lowerHdrs = hdrs.map(h => h.toLowerCase());
+      const autoText = hdrs.find((_, i) => ["text", "review", "reviews", "sentiment"].includes(lowerHdrs[i])) || hdrs[0];
+      const autoDate = hdrs.find((_, i) => ["date", "created_at", "timestamp"].includes(lowerHdrs[i])) || "";
+      const autoCat = hdrs.find((_, i) => ["category", "categories", "tag"].includes(lowerHdrs[i])) || "";
+
+      setTextCol(autoText);
+      setDateCol(autoDate);
+      setCatCol(autoCat);
       setFile(f);
       setStep("map");
     };
@@ -97,11 +108,16 @@ export default function Upload() {
   return (
     <div className="pt-14 min-h-screen">
       <main className="max-w-4xl mx-auto p-6 space-y-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Import Sentiment Data</h1>
-          <p className="text-sm text-muted-foreground mt-1 max-w-2xl">
-            Upload your customer reviews, support tickets, or feedback logs in CSV format to begin technical sentiment decomposition and thematic clustering.
-          </p>
+        <div className="flex items-center gap-4">
+          <Button variant="outline" size="icon" onClick={() => window.history.back()} className="shrink-0 fixed top-4 left-4 md:top-8 md:left-8">
+            <ArrowLeft className="w-5 h-5" />
+          </Button>
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight">Import Sentiment Data</h1>
+            <p className="text-sm text-muted-foreground mt-1 max-w-2xl">
+              Upload your customer reviews, support tickets, or feedback logs in CSV format to begin technical sentiment decomposition and thematic clustering.
+            </p>
+          </div>
         </div>
 
         {error && (
@@ -127,9 +143,8 @@ export default function Upload() {
               onDrop={onDrop}
               onDragOver={(e) => e.preventDefault()}
               onClick={() => step === "pick" && inputRef.current?.click()}
-              className={`border-2 border-dashed rounded-lg p-10 text-center transition-colors ${
-                step === "pick" ? "cursor-pointer hover:border-primary hover:bg-primary/5" : "border-border bg-muted/20"
-              }`}
+              className={`border-2 border-dashed rounded-lg p-10 text-center transition-colors ${step === "pick" ? "cursor-pointer hover:border-primary hover:bg-primary/5" : "border-border bg-muted/20"
+                }`}
             >
               <FileUp className="w-10 h-10 mx-auto text-muted-foreground mb-3" />
               {step === "pick" ? (
@@ -158,9 +173,9 @@ export default function Upload() {
               </div>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-3 md:grid-cols-4 gap-6">
                 {/* Preview table */}
-                <div>
+                <div className="sm:col-span-2 md:col-span-3">
                   <div className="flex items-center justify-between mb-2">
                     <p className="text-sm font-semibold">Data Preview</p>
                     <p className="text-xs text-muted-foreground">Showing first {preview.length} rows</p>
@@ -186,15 +201,15 @@ export default function Upload() {
                   <div>
                     <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Text Column <span className="text-destructive">*</span></label>
                     <Select value={textCol} onValueChange={setTextCol} disabled={step !== "map"}>
-                      <SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger>
+                      <SelectTrigger className="mt-1.5 w-full"><SelectValue /></SelectTrigger>
                       <SelectContent>{headers.map((h) => <SelectItem key={h} value={h}>{h}</SelectItem>)}</SelectContent>
                     </Select>
                     <p className="text-xs text-muted-foreground mt-1">Analyzed for sentiment.</p>
                   </div>
                   <div>
-                    <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Date Column <span className="text-muted-foreground">(optional)</span></label>
+                    <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Date Column <span className="ext-muted-foreground/80 text-[10px]">(optional)</span></label>
                     <Select value={dateCol || "__none"} onValueChange={(v) => setDateCol(v === "__none" ? "" : v)} disabled={step !== "map"}>
-                      <SelectTrigger className="mt-1.5"><SelectValue placeholder="— none —" /></SelectTrigger>
+                      <SelectTrigger className="mt-1.5 w-full"><SelectValue placeholder="— none —" /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="__none">— none —</SelectItem>
                         {headers.filter((h) => h !== textCol).map((h) => <SelectItem key={h} value={h}>{h}</SelectItem>)}
@@ -202,9 +217,9 @@ export default function Upload() {
                     </Select>
                   </div>
                   <div>
-                    <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Category Column <span className="text-muted-foreground">(optional)</span></label>
+                    <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Category Column <span className="text-muted-foreground/80 text-[10px]">(optional)</span></label>
                     <Select value={catCol || "__none"} onValueChange={(v) => setCatCol(v === "__none" ? "" : v)} disabled={step !== "map"}>
-                      <SelectTrigger className="mt-1.5"><SelectValue placeholder="— none —" /></SelectTrigger>
+                      <SelectTrigger className="mt-1.5 w-full"><SelectValue placeholder="— none —" /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="__none">— none —</SelectItem>
                         {headers.filter((h) => h !== textCol && h !== dateCol).map((h) => <SelectItem key={h} value={h}>{h}</SelectItem>)}
@@ -233,14 +248,15 @@ export default function Upload() {
             <CardContent className="py-8 text-center space-y-4">
               <div className="w-10 h-10 border-4 border-border border-t-primary rounded-full animate-spin mx-auto" />
               <p className="font-semibold">Processing reviews…</p>
-              {total > 0 && (
-                <>
-                  <div className="w-full bg-muted rounded-full h-2 max-w-sm mx-auto overflow-hidden">
-                    <div className="h-full bg-primary rounded-full transition-all duration-500" style={{ width: `${(processed / total) * 100}%` }} />
-                  </div>
-                  <p className="text-xs font-number text-muted-foreground">{processed} / {total}</p>
-                </>
-              )}
+
+              {/* {total > 0 && ( */}
+              <>
+                <div className="w-56 bg-muted rounded-full h-2 overflow-hidden m-auto">
+                  <div className="h-full bg-primary rounded-full transition-all duration-500 origin-left" style={{ width: `${(processed / total) * 100}%` }} />
+                </div>
+                <p className="text-xs font-number text-muted-foreground mt-1">{processed} / {total}</p>
+              </>
+              {/* )} */}
             </CardContent>
           </Card>
         )}
