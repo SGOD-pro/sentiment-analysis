@@ -87,8 +87,12 @@ def _wipe_table(table, key_schema) -> int:
 def reset_all_data():
     """Wipe all Reviews, Batches, and Aggregates data. Only works when DEBUG=true."""
     settings = get_settings()
-    if not settings.debug:
-        return ApiResponse(success=False, error_code="FORBIDDEN", message="Only available in debug mode")
+    if not settings.debug or not settings.reset_data_enabled:
+        return ApiResponse(
+            success=False,
+            error_code="FORBIDDEN",
+            message="Only available when debug reset is explicitly enabled",
+        )
 
     tables = get_tables()
     counts = {}

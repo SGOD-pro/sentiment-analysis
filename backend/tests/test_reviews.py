@@ -135,7 +135,7 @@ def test_reviews_includes_extra_columns(client, aws_mock):
 
 def test_review_detail_valid_id(client, aws_mock):
     _seed_reviews(aws_mock)
-    resp = client.get("/api/reviews/rev-0")
+    resp = client.get(f"/api/reviews/rev-0?batch_id={BATCH}")
     body = resp.json()
     assert body["success"] is True
     assert body["data"]["review_id"] == "rev-0"
@@ -144,8 +144,16 @@ def test_review_detail_valid_id(client, aws_mock):
     assert body["data"]["rating"] == "4"
 
 
+def test_review_detail_wrong_batch_hidden(client, aws_mock):
+    _seed_reviews(aws_mock)
+    resp = client.get("/api/reviews/rev-0?batch_id=other-batch")
+    body = resp.json()
+    assert body["success"] is False
+    assert body["error_code"] == "NOT_FOUND"
+
+
 def test_review_detail_unknown_id(client, aws_mock):
-    resp = client.get("/api/reviews/nonexistent")
+    resp = client.get(f"/api/reviews/nonexistent?batch_id={BATCH}")
     body = resp.json()
     assert body["success"] is False
     assert body["error_code"] == "NOT_FOUND"

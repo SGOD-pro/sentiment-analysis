@@ -48,3 +48,10 @@ def test_unknown_batch_id(client, aws_mock):
     body = resp.json()
     assert body["success"] is False
     assert body["error_code"] == "NOT_FOUND"
+
+
+def test_reset_data_requires_explicit_flag(client, aws_mock):
+    resp = client.delete("/api/data/reset")
+    body = resp.json()
+    assert body["success"] is False
+    assert body["error_code"] == "FORBIDDEN"

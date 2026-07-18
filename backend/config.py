@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     # App
     app_name: str = "Review Analytics API"
     debug: bool = False
+    reset_data_enabled: bool = False
 
 
 @lru_cache

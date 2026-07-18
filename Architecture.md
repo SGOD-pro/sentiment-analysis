@@ -81,7 +81,7 @@ sentiment-analytics/
 │       └── export_mlp_and_clusters.py
 │
 ├── lambda/                         # Production inference, already working
-│   ├── handler.py                  # lambda_handler_final.py
+│   ├── handler.py
 │   └── artifacts/
 │       ├── bge_onnx_quantized/     # ONLY this ships to Lambda - NOT bge_onnx_fp32
 │       │   ├── model_quantized.onnx

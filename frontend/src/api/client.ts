@@ -73,6 +73,17 @@ export function getReviews(batchId: string, filters: ReviewFilters = {}) {
   return request<ReviewsPage>(`/api/reviews?${params}`);
 }
 
-export function getReview(reviewId: string) {
-  return request<Review>(`/api/reviews/${reviewId}`);
+export function getReview(reviewId: string, batchId: string) {
+  const params = new URLSearchParams();
+  params.set("batch_id", batchId);
+  return request<Review>(`/api/reviews/${reviewId}?${params}`);
+}
+
+export async function checkHealth(): Promise<boolean> {
+  try {
+    const res = await request<{ status: string }>("/health");
+    return res.success === true && res.data?.status === "healthy";
+  } catch (err) {
+    return false;
+  }
 }

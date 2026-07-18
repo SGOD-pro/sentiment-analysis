@@ -36,16 +36,13 @@ def invoke_lambda(texts: list[str]) -> list[dict]:
         import os
         import sys
         
-        ml_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "ml"))
-        if ml_path not in sys.path:
-            sys.path.append(ml_path)
+        lambda_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "lambda"))
+        if lambda_path not in sys.path:
+            sys.path.append(lambda_path)
             
-        # Set artifact path before importing the handler
-        os.environ["ARTIFACT_DIR"] = os.path.abspath(os.path.join(ml_path, "..", "lambda", "artifacts"))
-        
-        import lambda_handler_final
+        import handler
         event = {"texts": texts}
-        response = lambda_handler_final.lambda_handler(event, None)
+        response = handler.lambda_handler(event, None)
         response_payload = {"body": response["body"]}
     else:
         client = boto3.client("lambda", **kwargs)

@@ -35,7 +35,8 @@ Files:
 
 `bge_onnx_fp32/` is a build artifact — NOT shipped to Lambda.
 
-Lambda handler: `lambda_handler_final.py` — tested end-to-end, output verified.
+Lambda handler: `lambda/handler.py` — tested end-to-end, output verified.
+There is exactly one Lambda handler file, at lambda/handler.py. It is never duplicated. Local testing imports it directly from this location.
 
 Dataset: `bge_clean_metadata.parquet` + `bge_clean_embeddings.npy`
 Splits: `clean_train_idx_v4.npy` / `clean_test_idx_v4.npy`

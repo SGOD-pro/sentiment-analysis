@@ -1,8 +1,3 @@
-/**
- * Upload page — matches Stitch "SentiMetric | Data Import & Analysis (v2)" screen.
- * Step 1: Data Source (drag-drop). Step 2: Column Mapping + preview table.
- * Step 3: Processing progress. Restores existing session on mount.
- */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";

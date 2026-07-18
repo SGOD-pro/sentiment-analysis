@@ -1,9 +1,10 @@
-import { useCallback, useState } from "react";
+import { useCallback, useState, useEffect } from "react";
 import { Link, Outlet, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { Toaster } from "@/components/ui/sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { Moon, Sun, Upload, BarChart3, FileText, Bell, Cog, RotateCcw } from "lucide-react";
+import { Moon, Sun, Upload, Bell, Cog, RotateCcw, Loader2, ServerCrash } from "lucide-react";
+import { checkHealth } from "./api/client";
 import Dashboard from "./pages/Dashboard";
 import Reviews from "./pages/Reviews";
 import Reports from "./pages/Reports";
@@ -166,6 +167,45 @@ function DashboardLayout() {
 }
 
 export default function App() {
+  const [isReady, setIsReady] = useState(false);
+  const [error, setError] = useState(false);
+
+  const initHealthCheck = useCallback(async () => {
+    setError(false);
+    const ok = await checkHealth();
+    if (ok) {
+      setIsReady(true);
+    } else {
+      setError(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    initHealthCheck();
+  }, [initHealthCheck]);
+
+  if (error) {
+    return (
+      <div className="h-screen w-screen flex flex-col items-center justify-center bg-background text-foreground space-y-4">
+        <ServerCrash className="w-12 h-12 text-destructive" />
+        <div className="text-center">
+          <h2 className="text-xl font-semibold mb-2">Server Unavailable</h2>
+          <p className="text-muted-foreground mb-6">Cannot connect to the backend services. Please ensure the backend is running.</p>
+          <Button onClick={initHealthCheck}>Retry Connection</Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isReady) {
+    return (
+      <div className="h-screen w-screen flex flex-col items-center justify-center bg-background text-foreground space-y-4">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        <p className="text-muted-foreground font-medium">Waking up server...</p>
+      </div>
+    );
+  }
+
   return (
     <>
       <Routes>

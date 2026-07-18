@@ -132,13 +132,13 @@ def list_reviews(
 
 
 @router.get("/reviews/{review_id}", response_model=ApiResponse)
-def get_review(review_id: str):
-    """Return a single review by ID."""
+def get_review(review_id: str, batch_id: str):
+    """Return a single review by ID within the requested batch."""
     tables = get_tables()
     resp = tables.reviews.get_item(Key={"review_id": review_id})
     item = resp.get("Item")
 
-    if not item:
+    if not item or item.get("batch_id") != batch_id:
         return ApiResponse(success=False, error_code="NOT_FOUND", message="Review not found")
 
     review = {k: v for k, v in item.items() if k != "extra_columns"}

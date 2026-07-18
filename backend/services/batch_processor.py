@@ -38,12 +38,10 @@ def _week_key(date_str: str) -> str:
 
 
 def _batch_write_reviews(table, items: list[dict]) -> None:
-    """Write review items to DynamoDB using batch_write_item (up to 25 per call)."""
-    for i in range(0, len(items), 25):
-        chunk = items[i : i + 25]
-        with table.batch_writer() as writer:
-            for item in chunk:
-                writer.put_item(Item=item)
+    """Write review items to DynamoDB using boto3 batch_writer."""
+    with table.batch_writer() as writer:
+        for item in items:
+            writer.put_item(Item=item)
 
 
 def process_batch(batch_id: str) -> None:
@@ -236,8 +234,9 @@ def _accum_aggregate(accum: dict, agg_type: str, metric: str) -> None:
 def _flush_aggregates(tables, batch_id: str, accum: dict) -> None:
     """Write all accumulated aggregates to DynamoDB in batch."""
     ts = datetime.now(timezone.utc).isoformat()
-    for agg_type, metrics in accum.items():
-        item = {"batch_id": batch_id, "agg_type": agg_type, "updated_at": ts}
-        for metric, value in metrics.items():
-            item[metric] = value
-        tables.aggregates.put_item(Item=item)
+    with tables.aggregates.batch_writer() as writer:
+        for agg_type, metrics in accum.items():
+            item = {"batch_id": batch_id, "agg_type": agg_type, "updated_at": ts}
+            for metric, value in metrics.items():
+                item[metric] = value
+            writer.put_item(Item=item)

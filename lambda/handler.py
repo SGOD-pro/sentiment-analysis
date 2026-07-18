@@ -28,8 +28,8 @@ from tokenizers import Tokenizer
 # AWS, set the env var to point at wherever export_mlp_and_clusters.py
 # actually wrote its output, e.g.:
 #   os.environ["ARTIFACT_DIR"] = "/content/drive/MyDrive/Dataset/embeddings_output/lambda_deploy_artifacts"
-# Defaults to /opt/model so nothing changes when this actually deploys.
-ARTIFACT_DIR = os.environ.get("ARTIFACT_DIR", "/opt/model")
+# Defaults to artifacts/ relative to this script so it resolves correctly locally and when deployed together.
+ARTIFACT_DIR = os.environ.get("ARTIFACT_DIR", os.path.join(os.path.dirname(os.path.abspath(__file__)), "artifacts"))
 
 with open(f"{ARTIFACT_DIR}/config.json") as f:
     CONFIG = json.load(f)
@@ -164,11 +164,6 @@ def lambda_handler(event, context):
     return {"statusCode": 200, "body": json.dumps({"results": results})}
 
 
-# ---------------------------------------------------------------------------
-# LOCAL TEST - run this file directly (not via Lambda) to verify everything
-# loads and produces sane output BEFORE you package and deploy anything.
-# Set ARTIFACT_DIR env var above to your local export path first.
-# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     test_event = {
         "texts": [
