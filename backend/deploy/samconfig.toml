@@ -1,0 +1,28 @@
+version = 0.1
+
+[default.deploy.parameters]
+stack_name = "sentimetric"
+region = "ap-south-1"
+confirm_changeset = false
+capabilities = "CAPABILITY_IAM"
+resolve_s3 = true
+disable_rollback = false
+# No 'profile =' line — GitHub runners authenticate purely via
+# aws-actions/configure-aws-credentials, never a local AWS CLI profile.
+
+[default.build.parameters]
+use_container = true
+cached = true
+parallel = true
+
+[dev.deploy.parameters]
+stack_name = "sentimetric-dev"
+region = "ap-south-1"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM"
+resolve_s3 = true
+
+[dev.build.parameters]
+use_container = true
+cached = true
+parallel = true

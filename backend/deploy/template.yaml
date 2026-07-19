@@ -1,0 +1,126 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  SentiMetric — AI Customer Review Analytics Platform
+  FastAPI backend (Lambda + API Gateway HTTP API v2)
+  + ML inference Lambda (ONNX BGE encoder + MLP sentiment + KMeans issue detection)
+
+# ── Global defaults ──────────────────────────────────────────────────────
+# Sized per Rules.md: memory <512MB, cold start target 3-5s.
+# Backend function is thin (FastAPI + boto3 only) — 256MB is right-sized.
+# ML function loads a 35MB ONNX model into memory - 512MB is the real floor, not overkill.
+Globals:
+  Function:
+    Runtime: python3.13
+    Timeout: 30            # backend routes are fast; ML batches capped separately below
+    MemorySize: 512        # Rules.md ceiling - do not raise without updating Rules.md
+    Architectures:
+      - x86_64
+    Environment:
+      Variables:
+        ENVIRONMENT: production
+        LOG_LEVEL: INFO
+        AWS_ENDPOINT_URL: ""
+
+Parameters:
+  S3BucketName:
+    Type: String
+    Default: sentimetric-prod-storage
+    Description: S3 bucket for uploaded CSV storage
+  DynamoDBReviewsTable:
+    Type: String
+    Default: Reviews
+  DynamoDBBatchesTable:
+    Type: String
+    Default: Batches
+  DynamoDBAggregatesTable:
+    Type: String
+    Default: Aggregates
+
+Resources:
+  # ── FastAPI backend Lambda — routes, DynamoDB, S3, invokes MLInferenceFunction ──
+  BackendFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: sentimetric-backend-api
+      Description: SentiMetric FastAPI backend via Mangum
+      CodeUri: src/           # packages backend/src/ as Lambda zip root
+      Handler: lambda_handler.handler   # no src. prefix — CodeUri already points into src/
+      MemorySize: 256          # right-sized — no ONNX runtime here, FastAPI + boto3 only
+      Timeout: 30
+      Environment:
+        Variables:
+          S3_BUCKET_NAME: !Ref S3BucketName
+          DYNAMODB_REVIEWS_TABLE: !Ref DynamoDBReviewsTable
+          DYNAMODB_BATCHES_TABLE: !Ref DynamoDBBatchesTable
+          DYNAMODB_AGGREGATES_TABLE: !Ref DynamoDBAggregatesTable
+          ML_INFERENCE_FUNCTION_NAME: !Ref MLInferenceFunction
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref S3BucketName
+        - DynamoDBCrudPolicy:
+            TableName: !Ref DynamoDBReviewsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref DynamoDBBatchesTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref DynamoDBAggregatesTable
+        - LambdaInvokePolicy:
+            FunctionName: !Ref MLInferenceFunction
+      Events:
+        ApiProxy:
+          Type: HttpApi
+          Properties:
+            Path: /{proxy+}
+            Method: ANY
+            ApiId: !Ref SentiMetricHttpApi
+        ApiRoot:
+          Type: HttpApi
+          Properties:
+            Path: /
+            Method: ANY
+            ApiId: !Ref SentiMetricHttpApi
+
+  # ── ML inference Lambda — ONNX BGE + MLP + KMeans, NO torch/transformers/sklearn ──
+  # Per Rules.md Library Rules: onnxruntime, numpy, tokenizers ONLY.
+  # Package includes bge_onnx_quantized/ (~35MB) - never bge_onnx_fp32.
+  MLInferenceFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: sentimetric-ml-inference
+      Description: BGE ONNX embedding + MLP sentiment + KMeans issue detection
+      CodeUri: ../../lambda/          # points at lambda/ directory, NOT backend/
+      Handler: handler.lambda_handler
+      MemorySize: 512                 # Rules.md ceiling - model + runtime must fit here
+      Timeout: 30
+      # No Events block - this function is invoked directly by BackendFunction,
+      # never exposed via API Gateway. Keeps the ML model out of the public surface.
+
+  # ── API Gateway HTTP API (v2) ────────────────────────────────────────────
+  SentiMetricHttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: $default
+      CorsConfiguration:
+        AllowOrigins:
+          - "*"    # restrict to your Vercel domain in production
+        AllowMethods:
+          - GET
+          - POST
+          - DELETE
+          - PATCH
+          - OPTIONS
+        AllowHeaders:
+          - Content-Type
+          - Authorization
+          - X-Requested-With
+
+Outputs:
+  ApiUrl:
+    Description: "API Gateway HTTP API URL (use as VITE_API_BASE_URL)"
+    Value: !Sub "https://${SentiMetricHttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+  BackendFunctionArn:
+    Value: !GetAtt BackendFunction.Arn
+  MLInferenceFunctionArn:
+    Value: !GetAtt MLInferenceFunction.Arn
+  MLInferenceFunctionName:
+    Value: !Ref MLInferenceFunction

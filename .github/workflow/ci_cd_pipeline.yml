@@ -1,0 +1,495 @@
+name: CI/CD Pipeline
+
+# ──────────────────────────────────────────────────────────────
+# Manual trigger only — go to Actions tab → "CI/CD Pipeline" → Run workflow.
+# Use the force_ inputs to deploy even when no file changes are detected.
+# ──────────────────────────────────────────────────────────────
+on:
+  workflow_dispatch:
+    inputs:
+      force_backend:
+        description: "Force deploy backend (even if no changes detected)"
+        type: boolean
+        default: false
+      force_frontend:
+        description: "Force deploy frontend (even if no changes detected)"
+        type: boolean
+        default: false
+      force_ml:
+        description: "Force deploy ML inference function (even if no changes detected)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# ──────────────────────────────────────────────────────────────
+# JOB 1 — Detect which parts of the repo changed
+# Backend and ML Lambda deploy TOGETHER via one `sam deploy` (same template.yaml),
+# but we still detect changes separately so a pure-frontend commit doesn't
+# needlessly rebuild the ML model artifacts.
+# ──────────────────────────────────────────────────────────────
+jobs:
+  detect-changes:
+    name: "🔍 Detect Changes"
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.changes.outputs.backend }}
+      frontend: ${{ steps.changes.outputs.frontend }}
+      ml: ${{ steps.changes.outputs.ml }}
+      deploy_infra: ${{ steps.changes.outputs.deploy_infra }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect changed paths
+        id: changes
+        run: |
+          CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || git diff --name-only HEAD 2>/dev/null || echo "")
+
+          echo "📝 Changed files in this commit:"
+          if [ -z "$CHANGED" ]; then
+            echo "  (none — possibly first commit or force override)"
+          else
+            echo "$CHANGED" | sed 's/^/  /'
+          fi
+          echo ""
+
+          BACKEND=false
+          FRONTEND=false
+          ML=false
+          DEPLOY_INFRA=false
+
+          echo "$CHANGED" | grep -qE "^backend/" && BACKEND=true
+          echo "$CHANGED" | grep -qE "^frontend/" && FRONTEND=true
+          echo "$CHANGED" | grep -qE "^lambda/" && ML=true
+          echo "$CHANGED" | grep -qE "^backend/deploy/template\.yaml$|^backend/deploy/samconfig\.toml$" && DEPLOY_INFRA=true
+
+          # If template/samconfig changed, both backend and ML must redeploy
+          # since they share one CloudFormation stack.
+          [ "$DEPLOY_INFRA" = "true" ] && BACKEND=true && ML=true
+
+          [ "${{ inputs.force_backend }}" = "true" ] && BACKEND=true
+          [ "${{ inputs.force_frontend }}" = "true" ] && FRONTEND=true
+          [ "${{ inputs.force_ml }}" = "true" ] && ML=true
+
+          echo "backend=$BACKEND" >> "$GITHUB_OUTPUT"
+          echo "frontend=$FRONTEND" >> "$GITHUB_OUTPUT"
+          echo "ml=$ML" >> "$GITHUB_OUTPUT"
+          echo "deploy_infra=$DEPLOY_INFRA" >> "$GITHUB_OUTPUT"
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  🔧 Backend changed      : $BACKEND"
+          echo "  🧠 ML Lambda changed    : $ML"
+          echo "  🎨 Frontend changed     : $FRONTEND"
+          echo "  📐 Deploy infra changed : $DEPLOY_INFRA"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# ──────────────────────────────────────────────────────────────
+# JOB 2 — Backend tests
+# ──────────────────────────────────────────────────────────────
+  test-backend:
+    name: "🧪 Test Backend"
+    needs: detect-changes
+    if: needs.detect-changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+          enable-cache: false
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Start backend server & check health endpoint
+        run: |
+          PYTHONPATH=src uv run uvicorn main:app --host 0.0.0.0 --port 8000 &
+          echo "Waiting for backend server to start..."
+          for i in {1..15}; do
+            if curl -s http://localhost:8000/health | grep -q "status"; then
+              echo "✅ Health check successful!"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "❌ Health check failed!"
+          exit 1
+        env:
+          AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION:    ${{ secrets.AWS_DEFAULT_REGION || 'ap-south-1' }}
+          AWS_ENDPOINT_URL:      ${{ secrets.AWS_ENDPOINT_URL || '' }}
+          S3_BUCKET_NAME:        ${{ secrets.S3_BUCKET_NAME }}
+          DYNAMODB_REVIEWS_TABLE:    ${{ secrets.DYNAMODB_REVIEWS_TABLE || 'ReviewsTest' }}
+          DYNAMODB_BATCHES_TABLE:    ${{ secrets.DYNAMODB_BATCHES_TABLE || 'BatchesTest' }}
+          DYNAMODB_AGGREGATES_TABLE: ${{ secrets.DYNAMODB_AGGREGATES_TABLE || 'AggregatesTest' }}
+          ENVIRONMENT:           ${{ secrets.ENVIRONMENT || 'development' }}
+          LOG_LEVEL:             ${{ secrets.LOG_LEVEL || 'DEBUG' }}
+
+      - name: Run pytest suite
+        run: uv run pytest tests/ -v
+        env:
+          AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION:    ${{ secrets.AWS_DEFAULT_REGION || 'ap-south-1' }}
+          DYNAMODB_REVIEWS_TABLE:    ${{ secrets.DYNAMODB_REVIEWS_TABLE || 'ReviewsTest' }}
+          DYNAMODB_BATCHES_TABLE:    ${{ secrets.DYNAMODB_BATCHES_TABLE || 'BatchesTest' }}
+          DYNAMODB_AGGREGATES_TABLE: ${{ secrets.DYNAMODB_AGGREGATES_TABLE || 'AggregatesTest' }}
+
+# ──────────────────────────────────────────────────────────────
+# JOB 3 — ML inference function tests
+# Verifies the handler runs against local artifacts before touching Lambda.
+# Per Rules.md: no torch/transformers/sklearn allowed in this package.
+# ──────────────────────────────────────────────────────────────
+  test-ml:
+    name: "🧪 Test ML Inference"
+    needs: detect-changes
+    if: needs.detect-changes.outputs.ml == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: lambda
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install ML Lambda dependencies ONLY
+        run: |
+          pip install onnxruntime numpy tokenizers pytest
+          echo "🔒 Verifying forbidden libraries are NOT installed..."
+          for pkg in torch transformers sentence-transformers tensorflow sklearn; do
+            if pip show "$pkg" 2>/dev/null; then
+              echo "❌ FORBIDDEN: $pkg is installed. Rules.md prohibits this in Lambda deploy."
+              exit 1
+            fi
+          done
+          echo "✅ No forbidden libraries present."
+
+      - name: Verify package size stays under budget
+        run: |
+          du -sh artifacts/ 2>/dev/null || echo "artifacts/ not present in repo — check .gitignore, verify build step downloads it"
+
+      - name: Run handler local test
+        run: |
+          export ARTIFACT_DIR="$(pwd)/artifacts"
+          python handler.py
+
+# ──────────────────────────────────────────────────────────────
+# JOB 4 — Frontend tests
+# ──────────────────────────────────────────────────────────────
+  test-frontend:
+    name: "🧪 Test Frontend"
+    needs: detect-changes
+    if: needs.detect-changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: cd frontend && npm ci
+
+      - name: Lint
+        run: cd frontend && npm run lint
+
+      - name: Type-check & Build
+        run: cd frontend && npm run build
+        env:
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL || 'https://placeholder.execute-api.ap-south-1.amazonaws.com' }}
+
+# ──────────────────────────────────────────────────────────────
+# JOB 5 — Deploy backend + ML Lambda → AWS via SAM (single stack)
+#
+# Deployment flow:
+#   1. Checkout repo
+#   2. Configure AWS credentials
+#   3. Install uv + Python 3.13
+#   4. Prepare deploy/src/ (backend FastAPI code)
+#   5. Copy lambda/ artifacts into place for the ML function
+#      (lambda/artifacts/ must exist — either committed via Git LFS,
+#       pulled from S3, or built fresh; see note below)
+#   6. Export uv.lock → requirements.txt
+#   7. sam build --use-container (builds BOTH functions from one template)
+#   8. sam deploy
+#   9. Print API Gateway URL + ML function name
+#
+# NOTE ON ML ARTIFACTS: model_quantized.onnx, mlp_weights.npz, and
+# issue_centroids.npy are binary build outputs from the ml/ export
+# scripts - NOT source code, NOT committed to Git.
+# They are uploaded once to S3 at:
+#   s3://<bucket>/ml-artifacts/lambda_deploy_artifacts/
+# and pulled down fresh at the start of every deploy via `aws s3 sync`.
+# To update the model after retraining: re-run export_for_lambda.py and
+# export_mlp_and_clusters.py, then `aws s3 sync ./lambda_deploy_artifacts
+# s3://<bucket>/ml-artifacts/lambda_deploy_artifacts/ --exclude "bge_onnx_fp32/*"`
+# BEFORE running this pipeline. bge_onnx_fp32/ is explicitly excluded on
+# every sync - only the quantized model ships.
+# ──────────────────────────────────────────────────────────────
+  deploy-backend:
+    name: "🚀 Deploy Backend + ML Lambda → AWS (SAM)"
+    needs: [test-backend, test-ml]
+    if: |
+      always() &&
+      (needs.test-backend.result == 'success' || needs.test-backend.result == 'skipped') &&
+      (needs.test-ml.result == 'success' || needs.test-ml.result == 'skipped') &&
+      (needs.test-backend.result == 'success' || needs.test-ml.result == 'success')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-south-1
+
+      - name: Pull ML model artifacts from S3
+        run: |
+          echo "📥 Syncing lambda/artifacts/ from S3..."
+          mkdir -p ../lambda/artifacts
+          aws s3 sync \
+            "s3://${{ secrets.S3_BUCKET_NAME }}/ml-artifacts/lambda_deploy_artifacts/" \
+            ../lambda/artifacts/ \
+            --exclude "bge_onnx_fp32/*"
+          echo "✅ Synced. Contents:"
+          find ../lambda/artifacts -type f -exec du -h {} \;
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+          enable-cache: true
+          cache-dependency-glob: "backend/uv.lock"
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Prepare backend deployment source folder
+        run: |
+          echo "🧹 Removing stale deploy/src/ (gitignored — always recreated)"
+          rm -rf deploy/src
+          echo "📂 Copying backend/src/ → backend/deploy/src/"
+          cp -r src deploy/src
+          echo "✅ deploy/src/ contents:"
+          ls -la deploy/src/
+
+      - name: Verify ML Lambda artifacts are present
+        run: |
+          echo "🔍 Checking lambda/artifacts/ ..."
+          ls -la ../lambda/artifacts/bge_onnx_quantized/ 2>/dev/null || {
+            echo "❌ ERROR: lambda/artifacts/bge_onnx_quantized/ not found."
+            echo "   Model artifacts must be committed (Git LFS) or pulled from S3"
+            echo "   before sam build. See workflow comment above deploy-backend job."
+            exit 1
+          }
+          echo "✅ ML artifacts present:"
+          du -sh ../lambda/artifacts/bge_onnx_quantized/model_quantized.onnx
+          du -sh ../lambda/artifacts/mlp_weights.npz
+          du -sh ../lambda/artifacts/issue_centroids.npy
+
+      - name: Generate requirements.txt from uv.lock
+        run: |
+          uv export \
+            --no-dev \
+            --format requirements-txt \
+            --no-hashes \
+            -o requirements.txt
+          echo "📦 Generated requirements.txt (first 20 lines):"
+          head -20 requirements.txt
+
+      - name: Copy requirements.txt → deploy/requirements.txt
+        run: |
+          cp requirements.txt deploy/requirements.txt
+          echo "✅ deploy/requirements.txt is ready ($(wc -l < deploy/requirements.txt) packages)"
+
+      - name: Generate ML Lambda requirements.txt (minimal, no torch/transformers)
+        run: |
+          cat > ../lambda/requirements.txt << 'EOF'
+          onnxruntime
+          numpy
+          tokenizers
+          EOF
+          echo "✅ ML Lambda requirements.txt:"
+          cat ../lambda/requirements.txt
+
+      - name: Install AWS SAM CLI
+        uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+
+      - name: SAM Build (both functions)
+        working-directory: backend/deploy
+        run: |
+          echo "🏗️  Running sam build for BackendFunction + MLInferenceFunction..."
+          sam build \
+            --use-container \
+            --template-file template.yaml
+
+      - name: Check build output size
+        run: |
+          echo "📊 Built package sizes (post sam build, pre-zip):"
+          du -sh backend/deploy/.aws-sam/build/BackendFunction/ 2>/dev/null || true
+          du -sh backend/deploy/.aws-sam/build/MLInferenceFunction/ 2>/dev/null || true
+        working-directory: .
+
+      - name: SAM Deploy
+        working-directory: backend/deploy
+        run: |
+          echo "🚀 Deploying stack sentimetric to ap-south-1..."
+          sam deploy \
+            --config-env default \
+            --no-confirm-changeset \
+            --no-fail-on-empty-changeset \
+            --parameter-overrides \
+              S3BucketName=${{ secrets.S3_BUCKET_NAME }} \
+              DynamoDBReviewsTable=${{ secrets.DYNAMODB_REVIEWS_TABLE || 'Reviews' }} \
+              DynamoDBBatchesTable=${{ secrets.DYNAMODB_BATCHES_TABLE || 'Batches' }} \
+              DynamoDBAggregatesTable=${{ secrets.DYNAMODB_AGGREGATES_TABLE || 'Aggregates' }}
+
+      - name: Print API Gateway URL + function names
+        run: |
+          API_URL=$(aws cloudformation describe-stacks \
+            --stack-name sentimetric \
+            --region ap-south-1 \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" \
+            --output text)
+
+          ML_FN=$(aws cloudformation describe-stacks \
+            --stack-name sentimetric \
+            --region ap-south-1 \
+            --query "Stacks[0].Outputs[?OutputKey=='MLInferenceFunctionName'].OutputValue" \
+            --output text)
+
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  ✅  Backend + ML Lambda deployed successfully!"
+          echo ""
+          echo "  🌐  API Gateway URL:"
+          echo "      $API_URL"
+          echo ""
+          echo "  🧠  ML Inference Function:"
+          echo "      $ML_FN"
+          echo ""
+          echo "  📋  Health check:"
+          echo "      $API_URL/health"
+          echo ""
+          echo "  💡  Update VITE_API_BASE_URL secret to:"
+          echo "      $API_URL"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# ──────────────────────────────────────────────────────────────
+# JOB 6 — Deploy frontend → Vercel
+# ──────────────────────────────────────────────────────────────
+  deploy-frontend:
+    name: "🚀 Deploy Frontend → Vercel"
+    needs: [test-frontend]
+    if: needs.test-frontend.result == 'success'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-south-1
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: cd frontend && npm ci
+
+      - name: Resolve backend API URL
+        id: resolve-url
+        run: |
+          echo "🔍 Querying CloudFormation for ApiUrl..."
+
+          LIVE_URL=$(aws cloudformation describe-stacks \
+            --stack-name sentimetric \
+            --region ap-south-1 \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" \
+            --output text 2>/dev/null || echo "")
+
+          SECRET_URL="${{ secrets.VITE_API_BASE_URL }}"
+
+          if [ -n "$LIVE_URL" ] && [ "$LIVE_URL" != "None" ]; then
+            echo "✅ Using live CloudFormation URL: $LIVE_URL"
+            echo "api_url=$LIVE_URL" >> "$GITHUB_OUTPUT"
+          elif [ -n "$SECRET_URL" ]; then
+            echo "⚠️  Stack not found — using VITE_API_BASE_URL secret: $SECRET_URL"
+            echo "api_url=$SECRET_URL" >> "$GITHUB_OUTPUT"
+          else
+            echo "❌ ERROR: No backend URL available."
+            exit 1
+          fi
+
+      - name: Deploy to Vercel (production)
+        id: vercel-deploy
+        run: |
+          cd frontend
+          npx vercel \
+            --token "${{ secrets.VERCEL_TOKEN }}" \
+            --prod \
+            --yes \
+            --build-env VITE_API_BASE_URL="${{ steps.resolve-url.outputs.api_url }}" | tee deploy.log
+
+          VERCEL_URL=$(cat deploy.log | grep -Eo "https://[a-zA-Z0-9._-]+\.vercel\.app" | tail -1)
+          echo "vercel_url=$VERCEL_URL" >> "$GITHUB_OUTPUT"
+
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  ✅  Frontend deployed successfully!"
+          echo "  🌐  Vercel URL: $VERCEL_URL"
+          echo "  🔗  Backend API URL injected: ${{ steps.resolve-url.outputs.api_url }}"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        env:
+          VERCEL_ORG_ID:     ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}

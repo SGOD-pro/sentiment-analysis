@@ -10,8 +10,9 @@ Purpose: load full project context in one file, not by reading every folder.
 Phase 8 — Frontend (Complete, verified)
 
 Lambda handler is working and locally tested.
-Backend FastAPI is complete — all routes built and tested (60 tests passing).
-Dashboard, Reviews, Reports pages built and verified — all filters wired.
+Backend FastAPI is complete — all routes built and tested (66 tests passing).
+Two-Lambda split confirmed and deployed: BackendFunction (256MB, FastAPI+boto3) + MLInferenceFunction (512MB, ONNX model).
+Backend restructured to src/ layout. lambda_handler.py (Mangum wrapper) created. Mangum 0.21.0 added.
 
 ---
 
@@ -70,16 +71,62 @@ GET  /api/reviews/:id         — single review detail
 GET  /health                  — health check
 ```
 
-Key files: `backend/main.py`, `config.py`, `database.py`, `logger.py`, `models.py`
-Routers: `routers/{upload,batches,trends,categories,issues,reviews}.py`
-Services: `services/{batch_processor,lambda_client,text_preprocessing}.py`
-Tests: `tests/test_{health,upload,batch_processor,batches,trends,categories,issues,reviews,filter_regression,text_preprocessing}.py`
+Key files: `backend/src/main.py`, `backend/src/config.py`, `backend/src/database.py`, `backend/src/logger.py`, `backend/src/models.py`, `backend/src/lambda_handler.py`
+Routers: `backend/src/routers/{upload,batches,trends,categories,issues,reviews}.py`
+Services: `backend/src/services/{batch_processor,lambda_client,text_preprocessing}.py`
+Tests: `backend/tests/test_{health,upload,batch_processor,batches,trends,categories,issues,reviews,filter_regression,text_preprocessing}.py`
 
 Aggregates key patterns: `TREND#{category}#{week}`, `CAT#{category}`, `ISSUE#{tag}#{week}`
 Batch processor: chunks → Lambda (concurrent via ThreadPoolExecutor), batch_write_item for DynamoDB,
   text_preprocessing (HTML strip, URL removal, capitalize after fullstop) applied before inference,
   processing_duration_seconds stored in Batches table.
 All config from env vars (pydantic-settings). No hardcoded values. Structured JSON logging.
+
+### Lambda Deployment Architecture — CONFIRMED FINAL
+
+Two separate Lambda functions, one CloudFormation stack, one template.yaml at backend/deploy/template.yaml:
+
+1. BackendFunction (sentimetric-backend-api) — 256MB
+   - FastAPI + boto3 only. No ONNX runtime.
+   - CodeUri: src/ (packages backend/src/ as zip root)
+   - Handler: lambda_handler.handler (Mangum wrapper around FastAPI app)
+   - Entry: backend/src/lambda_handler.py
+
+2. MLInferenceFunction (sentimetric-ml-inference) — 512MB
+   - ONNX runtime + BGE encoder + MLP + KMeans only. No FastAPI.
+   - CodeUri: ../../lambda/ (relative to backend/deploy/template.yaml → repo-root/lambda/)
+   - Handler: handler.lambda_handler
+   - Entry: lambda/handler.py
+
+Rationale: pay ML-sized memory only for ML-sized work. BackendFunction cold-starts without loading the 35MB model.
+
+### Backend src/ layout
+
+```
+backend/
+  src/              ← Lambda CodeUri root (also pip-installed at pythonpath=src for tests)
+    main.py
+    config.py
+    logger.py
+    models.py
+    database.py
+    cache.py
+    startup_check.py
+    lambda_handler.py  ← Mangum(app) wrapper
+    routers/
+    services/
+      lambda_client.py  ← local-bypass uses 3x".." to reach repo-root/lambda/
+  src/routers/
+  src/services/
+  deploy/
+    template.yaml    ← SAM template (BackendFunction + MLInferenceFunction)
+    samconfig.toml   ← stack name: sentimetric, region: ap-south-1
+  scripts/
+  tests/
+```
+
+Local dev: `cd backend && PYTHONPATH=src uv run uvicorn main:app --reload`
+Tests: `cd backend && uv run pytest tests/ -v` (66 passing)
 
 ---
 

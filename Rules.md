@@ -124,18 +124,39 @@ No print() in production.
 
 # 7. Testing Rules
 
+Every function requires a test case. No exceptions for "small" or
+"obvious" functions — a one-line function with no test is exactly where
+silent regressions hide (see the filter-wiring bug found in Phase 8,
+which existed precisely because query-param handling had no test asserting
+the params actually affected the query).
+
 Every ML module requires
 
 - unit test
 - integration test
 - inference validation
 
-Every API requires
+Every API endpoint requires
 
 - success case
 - invalid input
 - empty input
 - malformed JSON
+- filter/query-param cases: assert the response DATA changes when a
+  filter changes, not just that the request doesn't error. A 200 response
+  with unfiltered data passing a test that only checks status code is a
+  false pass — this exact failure mode shipped once already.
+
+Every service function (lambda_client.py, batch_processor.py, etc.)
+requires a test for both branches when the function has environment-
+dependent behavior — e.g. lambda_client.invoke_lambda() must have a test
+covering the localhost/LocalStack bypass path AND a mocked test covering
+the real boto3.invoke() path, not just whichever one is easiest to test.
+
+Local dev and CI must run the SAME test suite against the SAME LocalStack
+setup — see Deployment.md. A test that only passes in CI but not locally
+(or vice versa) indicates an environment-detection bug, not an acceptable
+inconsistency.
 
 ---
 
@@ -268,4 +289,3 @@ Threshold Version
 Embedding Version
 
 Issue Cluster Version
-
