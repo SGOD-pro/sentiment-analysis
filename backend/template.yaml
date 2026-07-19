@@ -42,7 +42,7 @@ Resources:
   BackendFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: sentimetric-backend-api
+      FunctionName: sentimetric-backend-api #FUNCTION NAME FOR API
       Description: SentiMetric FastAPI backend via Mangum
       CodeUri: src/           # packages backend/src/ as Lambda zip root
       Handler: lambda_handler.handler   # no src. prefix — CodeUri already points into src/
@@ -90,7 +90,7 @@ Resources:
       Description: BGE ONNX embedding + MLP sentiment + KMeans issue detection
       CodeUri: ../../lambda/          # points at lambda/ directory, NOT backend/
       Handler: handler.lambda_handler
-      MemorySize: 512                 # Rules.md ceiling - model + runtime must fit here
+      MemorySize: 1024                 # Rules.md ceiling - model + runtime must fit here
       Timeout: 30
       # No Events block - this function is invoked directly by BackendFunction,
       # never exposed via API Gateway. Keeps the ML model out of the public surface.
