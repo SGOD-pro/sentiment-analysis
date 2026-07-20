@@ -42,7 +42,7 @@ Resources:
   BackendFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: sentimetric-backend-api #FUNCTION NAME FOR API
+      FunctionName: sentimetric-backend-api
       Description: SentiMetric FastAPI backend via Mangum
       CodeUri: src/           # packages backend/src/ as Lambda zip root
       Handler: lambda_handler.handler   # no src. prefix — CodeUri already points into src/
@@ -90,11 +90,59 @@ Resources:
       Description: BGE ONNX embedding + MLP sentiment + KMeans issue detection
       CodeUri: ../../lambda/          # points at lambda/ directory, NOT backend/
       Handler: handler.lambda_handler
-      MemorySize: 1024                 # Rules.md ceiling - model + runtime must fit here
+      MemorySize: 512                 # Rules.md ceiling - model + runtime must fit here
       Timeout: 30
       # No Events block - this function is invoked directly by BackendFunction,
       # never exposed via API Gateway. Keeps the ML model out of the public surface.
 
+    ReviewsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Ref DynamoDBReviewsTable
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: review_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: review_id
+          KeyType: HASH
+
+  ReviewsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Ref DynamoDBReviewsTable
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: review_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: review_id
+          KeyType: HASH
+
+  BatchesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Ref DynamoDBBatchesTable
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: batch_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: batch_id
+          KeyType: HASH
+
+  AggregatesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Ref DynamoDBAggregatesTable
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: batch_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: batch_id
+          KeyType: HASH
+  
   # ── API Gateway HTTP API (v2) ────────────────────────────────────────────
   SentiMetricHttpApi:
     Type: AWS::Serverless::HttpApi

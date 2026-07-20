@@ -1,20 +1,26 @@
 version = 0.1
 
 [default.deploy.parameters]
-stack_name = "sentimetric"
+stack_name = "sentrix"
 region = "ap-south-1"
-confirm_changeset = false
+confirm_changeset = true
 capabilities = "CAPABILITY_IAM"
 resolve_s3 = true
 disable_rollback = false
 # No 'profile =' line — GitHub runners authenticate purely via
 # aws-actions/configure-aws-credentials, never a local AWS CLI profile.
+s3_prefix = "sentrix"
+parameter_overrides = "S3BucketName=\"sentimetric-prod-storage\" DynamoDBReviewsTable=\"Reviews\" DynamoDBBatchesTable=\"Batches\" DynamoDBAggregatesTable=\"Aggregates\""
+image_repositories = []
 
 [default.build.parameters]
 use_container = true
 cached = true
 parallel = true
 
+
+[default.global.parameters]
+region = "ap-south-1"
 [dev.deploy.parameters]
 stack_name = "sentimetric-dev"
 region = "ap-south-1"

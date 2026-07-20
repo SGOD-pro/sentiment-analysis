@@ -37,11 +37,22 @@ with open(f"{ARTIFACT_DIR}/config.json") as f:
 tokenizer = Tokenizer.from_file(f"{ARTIFACT_DIR}/bge_onnx_quantized/tokenizer.json")
 tokenizer.enable_padding(pad_id=0, pad_token="[PAD]")
 tokenizer.enable_truncation(max_length=256)
+sess_options = ort.SessionOptions()
+
+sess_options.enable_mem_pattern = False
+sess_options.enable_cpu_mem_arena = False
+sess_options.graph_optimization_level = (
+    ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+)
+sess_options.intra_op_num_threads = 1
+sess_options.inter_op_num_threads = 1
 
 onnx_session = ort.InferenceSession(
     f"{ARTIFACT_DIR}/bge_onnx_quantized/model_quantized.onnx",
+    sess_options=sess_options,
     providers=["CPUExecutionProvider"],
 )
+
 
 mlp_weights = np.load(f"{ARTIFACT_DIR}/mlp_weights.npz")
 issue_centroids = np.load(f"{ARTIFACT_DIR}/issue_centroids.npy")  # shape (K, 384)

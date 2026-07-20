@@ -95,6 +95,79 @@ Resources:
       # No Events block - this function is invoked directly by BackendFunction,
       # never exposed via API Gateway. Keeps the ML model out of the public surface.
 
+
+  ReviewsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Ref DynamoDBReviewsTable
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: review_id
+          AttributeType: S
+        - AttributeName: batch_id
+          AttributeType: S
+        - AttributeName: sentiment
+          AttributeType: S
+        - AttributeName: batch_cat_sort
+          AttributeType: S
+        - AttributeName: batch_issue_sort
+          AttributeType: S
+      KeySchema:
+        - AttributeName: review_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: batch-sentiment-index
+          KeySchema:
+            - AttributeName: batch_id
+              KeyType: HASH
+            - AttributeName: sentiment
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: batch-category-index
+          KeySchema:
+            - AttributeName: batch_id
+              KeyType: HASH
+            - AttributeName: batch_cat_sort
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: batch-issue-index
+          KeySchema:
+            - AttributeName: batch_id
+              KeyType: HASH
+            - AttributeName: batch_issue_sort
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  BatchesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Ref DynamoDBBatchesTable
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: batch_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: batch_id
+          KeyType: HASH
+
+  AggregatesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Ref DynamoDBAggregatesTable
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: batch_id
+          AttributeType: S
+        - AttributeName: agg_type
+          AttributeType: S
+      KeySchema:
+        - AttributeName: batch_id
+          KeyType: HASH
+        - AttributeName: agg_type
+          KeyType: RANGE
   # ── API Gateway HTTP API (v2) ────────────────────────────────────────────
   SentiMetricHttpApi:
     Type: AWS::Serverless::HttpApi
