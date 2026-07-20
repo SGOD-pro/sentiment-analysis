@@ -137,7 +137,7 @@ export default function Upload() {
     if (step !== "processing" || !batchId) return;
     const MAX_POLL_TIME = 300000; // 5 minutes in ms
     const startTime = Date.now();
-    let timeoutId: NodeJS.Timeout;
+    let timeoutId: ReturnType<typeof setTimeout>;
 
     const poll = async () => {
       const elapsed = Date.now() - startTime;
@@ -154,12 +154,13 @@ export default function Upload() {
             const elapsedSinceStart = Date.now() - startTime;
             const minProcessingTime = 2000;
             const delay = Math.max(0, minProcessingTime - elapsedSinceStart);
+            const finalTotal = res.data.total_reviews;
             
             setTimeout(() => {
               setStep("done");
               session.setStatus("done");
-              session.setProcessedCount(Number(res.data.total_reviews));
-              toast.success(`Analysis complete — ${res.data.total_reviews} reviews processed`);
+              session.setProcessedCount(Number(finalTotal));
+              toast.success(`Analysis complete — ${finalTotal} reviews processed`);
             }, delay);
             return;
           }

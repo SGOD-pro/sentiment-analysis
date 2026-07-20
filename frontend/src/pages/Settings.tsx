@@ -11,7 +11,7 @@ import { Separator } from "@/components/ui/separator";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
-import { Trash2, Plus, Power, ArrowRight, ArrowLeft } from "lucide-react";
+import { Trash2, Plus, Power, ArrowLeft } from "lucide-react";
 
 interface Rule { id: string; name: string; level: string; desc: string; threshold: number; enabled: boolean; }
 

@@ -301,7 +301,7 @@ export default function Dashboard() {
                 <YAxis tick={{ fill: "oklch(var(--muted-foreground))", fontSize: 11 }} />
                 <Tooltip
                   contentStyle={{ backgroundColor: "oklch(var(--background))", border: "1px solid oklch(var(--border))", borderRadius: 8 }}
-                  formatter={(value: number, name: string) => [value, name.charAt(0).toUpperCase() + name.slice(1)]}
+                  formatter={(value: any, name: any) => [value, String(name).charAt(0).toUpperCase() + String(name).slice(1)]}
                 />
                 {showPositive && <Area type="monotone" dataKey="positive" stroke="#05B169" strokeWidth={2} fill="url(#g-pos)" dot={false} />}
                 {showNeutral && <Area type="monotone" dataKey="neutral" stroke="#7C828A" strokeWidth={2} fill="url(#g-neu)" dot={false} />}

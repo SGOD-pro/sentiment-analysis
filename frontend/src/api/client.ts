@@ -83,7 +83,7 @@ export async function checkHealth(): Promise<boolean> {
   try {
     const res = await request<{ status: string }>("/health");
     return res.success === true && res.data?.status === "healthy";
-  } catch (err) {
+  } catch {
     return false;
   }
 }
