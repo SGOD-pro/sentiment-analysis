@@ -66,6 +66,19 @@ Resources:
             TableName: !Ref DynamoDBAggregatesTable
         - LambdaInvokePolicy:
             FunctionName: !Ref MLInferenceFunction
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:ListTables
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - lambda:GetFunction
+              Resource: !GetAtt MLInferenceFunction.Arn
+            - Effect: Allow
+              Action:
+                - lambda:InvokeFunction
+              Resource: !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:sentimetric-backend-api"
       Events:
         ApiProxy:
           Type: HttpApi

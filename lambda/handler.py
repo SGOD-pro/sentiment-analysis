@@ -22,6 +22,36 @@ import os
 import numpy as np
 import onnxruntime as ort
 from tokenizers import Tokenizer
+import time
+import logging
+import sys
+from datetime import datetime, timezone
+
+class JSONFormatter(logging.Formatter):
+    """Formats log records as single-line JSON."""
+    def format(self, record: logging.LogRecord) -> str:
+        entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "level": record.levelname,
+            "module": record.module,
+            "message": record.getMessage(),
+        }
+        for key in record.__dict__:
+            if key not in logging.LogRecord(
+                "", 0, "", 0, "", (), None
+            ).__dict__ and key not in ("message", "msg"):
+                entry[key] = record.__dict__[key]
+        if record.exc_info and record.exc_info[0]:
+            entry["exception"] = self.formatException(record.exc_info)
+        return json.dumps(entry, default=str)
+
+logger = logging.getLogger("ml_inference")
+if not logger.handlers:
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(JSONFormatter())
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
 
 # In Lambda, this is the layer mount point - /opt/model is correct there,
 # do not change it for deployment. For LOCAL testing before you ever touch
@@ -59,19 +89,38 @@ issue_centroids = np.load(f"{ARTIFACT_DIR}/issue_centroids.npy")  # shape (K, 38
 
 
 def embed_texts(texts: list[str]) -> np.ndarray:
+    t_embed_start = time.perf_counter()
+
+    t_tok_start = time.perf_counter()
     encodings = tokenizer.encode_batch(texts)  # encode_batch pads to same length automatically
+    t_tok_end = time.perf_counter()
+    duration_tokenizer_ms = (t_tok_end - t_tok_start) * 1000
+
     input_ids = np.array([e.ids for e in encodings], dtype=np.int64)
     attention_mask = np.array([e.attention_mask for e in encodings], dtype=np.int64)
     token_type_ids = np.zeros_like(input_ids)
 
+    t_run_start = time.perf_counter()
     outputs = onnx_session.run(
         None,
         {"input_ids": input_ids, "attention_mask": attention_mask, "token_type_ids": token_type_ids},
     )
+    t_run_end = time.perf_counter()
+    duration_session_run_ms = (t_run_end - t_run_start) * 1000
+
     last_hidden_state = outputs[0]
     cls_embeddings = last_hidden_state[:, 0, :]  # CLS pooling - verify matches training pipeline
     norms = np.linalg.norm(cls_embeddings, axis=1, keepdims=True)
-    return cls_embeddings / np.clip(norms, 1e-9, None)
+    embeddings = cls_embeddings / np.clip(norms, 1e-9, None)
+
+    t_embed_end = time.perf_counter()
+    duration_embed_texts_ms = (t_embed_end - t_embed_start) * 1000
+
+    logger.info("tokenizer", extra={"duration_ms": duration_tokenizer_ms})
+    logger.info("session.run", extra={"duration_ms": duration_session_run_ms})
+    logger.info("embed_texts", extra={"duration_ms": duration_embed_texts_ms})
+
+    return embeddings
 
 
 def relu(x):
@@ -80,6 +129,8 @@ def relu(x):
 
 def mlp_forward(x: np.ndarray) -> np.ndarray:
     """VERIFY key names against your exported mlp_weights.npz - see export script warning."""
+    t_start = time.perf_counter()
+
     w1, b1 = mlp_weights["net.0.weight"], mlp_weights["net.0.bias"]
     w2, b2 = mlp_weights["net.3.weight"], mlp_weights["net.3.bias"]
     w3, b3 = mlp_weights["net.6.weight"], mlp_weights["net.6.bias"]
@@ -89,7 +140,13 @@ def mlp_forward(x: np.ndarray) -> np.ndarray:
     logits = h2 @ w3.T + b3
 
     exp_logits = np.exp(logits - logits.max(axis=1, keepdims=True))
-    return exp_logits / exp_logits.sum(axis=1, keepdims=True)
+    probs = exp_logits / exp_logits.sum(axis=1, keepdims=True)
+
+    t_end = time.perf_counter()
+    duration_mlp_forward_ms = (t_end - t_start) * 1000
+    logger.info("mlp_forward", extra={"duration_ms": duration_mlp_forward_ms})
+
+    return probs
 
 
 def apply_asymmetric_threshold(probs: np.ndarray):
@@ -137,6 +194,7 @@ def lambda_handler(event, context):
     Expects: {"texts": ["review 1", "review 2", ...]}
     Preprocessing (text_preprocessing.py) must run BEFORE texts reach here.
     """
+    t_handler_start = time.perf_counter()
     texts = event.get("texts", [])
     if not texts:
         return {"statusCode": 400, "body": json.dumps({"error": "no texts provided"})}
@@ -149,7 +207,9 @@ def lambda_handler(event, context):
     label_names = CONFIG["sentiment"]["label_names"]
     negative_id = CONFIG["sentiment"]["negative_class_id"]
 
+    t_issue_start = time.perf_counter()
     results = []
+    num_negative_reviews = 0
     for i, text in enumerate(texts):
         sentiment_label = label_names[sentiment_preds[i]]
 
@@ -159,6 +219,7 @@ def lambda_handler(event, context):
         issue_tag = None
         issue_distance = None
         if sentiment_preds[i] == negative_id:
+            num_negative_reviews += 1
             issue_tag, issue_distance = assign_issue_cluster(embeddings[i])
 
         results.append({
@@ -171,6 +232,19 @@ def lambda_handler(event, context):
             "issue_tag": issue_tag,
             "issue_distance": issue_distance,
         })
+    t_issue_end = time.perf_counter()
+    duration_issue_detection_ms = (t_issue_end - t_issue_start) * 1000
+    logger.info("issue_detection", extra={
+        "duration_ms": duration_issue_detection_ms,
+        "num_negative_reviews": num_negative_reviews,
+    })
+
+    t_handler_end = time.perf_counter()
+    duration_handler_ms = (t_handler_end - t_handler_start) * 1000
+    logger.info("lambda_handler", extra={
+        "duration_ms": duration_handler_ms,
+        "batch_size": len(texts),
+    })
 
     return {"statusCode": 200, "body": json.dumps({"results": results})}
 

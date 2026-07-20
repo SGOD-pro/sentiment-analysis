@@ -13,35 +13,51 @@ Example:
 
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    """All configuration from environment variables."""
+    model_config = {
+        "env_file": ".env",
+        "env_file_encoding": "utf-8",
+        "extra": "ignore",
+    }
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
+    aws_region: str = Field(default="ap-south-1", validation_alias="AWS_REGION")
+    aws_endpoint_url: str | None = Field(default=None, validation_alias="AWS_ENDPOINT_URL")
 
-    # AWS
-    aws_region: str = "us-east-1"
-    aws_endpoint_url: str | None = None  # for local DynamoDB/S3
+    dynamodb_reviews_table: str = Field(
+        default="Reviews",
+        validation_alias="DYNAMODB_REVIEWS_TABLE",
+    )
 
-    # DynamoDB table names
-    dynamodb_reviews_table: str = "Reviews"
-    dynamodb_batches_table: str = "Batches"
-    dynamodb_aggregates_table: str = "Aggregates"
+    dynamodb_batches_table: str = Field(
+        default="Batches",
+        validation_alias="DYNAMODB_BATCHES_TABLE",
+    )
 
-    # Redis (optional — app works without it)
-    redis_url: str = "redis://localhost:6379/0"
+    dynamodb_aggregates_table: str = Field(
+        default="Aggregates",
+        validation_alias="DYNAMODB_AGGREGATES_TABLE",
+    )
 
-    # S3
-    s3_bucket: str = "review-uploads"
+    s3_bucket: str = Field(
+        default="sentimetric-prod-storage",
+        validation_alias="S3_BUCKET_NAME",
+    )
 
-    # Lambda
-    lambda_function_name: str = "sentiment-inference"
-    lambda_batch_size: int = 50
+    lambda_function_name: str = Field(
+        default="sentimetric-ml-inference",
+        validation_alias="ML_INFERENCE_FUNCTION_NAME",
+    )
+    lambda_batch_size: int = 20
 
     # Upload limits
     max_upload_size_mb: int = 50
+
+    # Redis (optional — app works without it)
+    redis_url: str = "redis://localhost:6379/0"
 
     # App
     app_name: str = "Review Analytics API"

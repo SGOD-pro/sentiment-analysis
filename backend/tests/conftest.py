@@ -12,6 +12,7 @@ import pytest
 from moto import mock_aws
 
 # Set env vars BEFORE importing app modules so config picks them up
+os.environ["AWS_REGION"] = "us-east-1"
 os.environ["AWS_DEFAULT_REGION"] = "us-east-1"
 os.environ["AWS_ACCESS_KEY_ID"] = "testing"
 os.environ["AWS_SECRET_ACCESS_KEY"] = "testing"
@@ -21,8 +22,8 @@ os.environ["AWS_ENDPOINT_URL"] = ""  # clear so moto intercepts (not LocalStack)
 os.environ["DYNAMODB_REVIEWS_TABLE"] = "Reviews"
 os.environ["DYNAMODB_BATCHES_TABLE"] = "Batches"
 os.environ["DYNAMODB_AGGREGATES_TABLE"] = "Aggregates"
-os.environ["S3_BUCKET"] = "test-bucket"
-os.environ["LAMBDA_FUNCTION_NAME"] = "test-lambda"
+os.environ["S3_BUCKET_NAME"] = "test-bucket"
+os.environ["ML_INFERENCE_FUNCTION_NAME"] = "test-lambda"
 os.environ["DEBUG"] = "true"
 
 

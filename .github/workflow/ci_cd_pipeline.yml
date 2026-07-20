@@ -365,6 +365,16 @@ jobs:
             --use-container \
             --template-file template.yaml
 
+      - name: Strip unused dependencies from ML Inference package
+        working-directory: backend/deploy
+        run: |
+          echo "🧹 Stripping unused packages from built ML Inference function..."
+          rm -rf .aws-sam/build/MLInferenceFunction/huggingface_hub*
+          rm -rf .aws-sam/build/MLInferenceFunction/hf_xet*
+          rm -rf .aws-sam/build/MLInferenceFunction/hf-xet*
+          rm -rf .aws-sam/build/MLInferenceFunction/httpx*
+          rm -rf .aws-sam/build/MLInferenceFunction/httpcore*
+
       - name: Check build output size
         run: |
           echo "📊 Built package sizes (post sam build, pre-zip):"

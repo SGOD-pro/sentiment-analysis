@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { CheckCircle2, FileUp, Zap, AlertCircle, ArrowLeft, RotateCcw } from "lucide-react";
+import { CheckCircle2, FileUp, Zap, AlertCircle, ArrowLeft, RotateCcw, Loader2 } from "lucide-react";
 import { getBatchStatus, uploadCSV } from "@/api/client";
 import { saveColumnMap } from "@/hooks/useColumnMap";
 import { useSessionStore } from "@/hooks/useSessionStore";
@@ -27,6 +27,7 @@ export default function Upload() {
   const [processed, setProcessed] = useState(0);
   const [total, setTotal] = useState(0);
   const [error, setError] = useState("");
+  const [isUploading, setIsUploading] = useState(false);
 
   const session = useSessionStore();
 
@@ -83,15 +84,21 @@ export default function Upload() {
 
   const handleSubmit = async () => {
     if (!file || !textCol) return;
+    setIsUploading(true);
     const extraCols = headers.filter((h) => h !== textCol && h !== catCol && h !== dateCol);
     try {
       const res = await uploadCSV(file, textCol, catCol || undefined, dateCol || undefined);
-      if (!res.success || !res.data) { setError(res.message ?? "Upload failed"); return; }
+      if (!res.success || !res.data) { 
+        setError(res.message ?? "Upload failed"); 
+        setIsUploading(false);
+        return; 
+      }
       saveColumnMap({ textCol, catCol: catCol || undefined, dateCol: dateCol || undefined, extraCols });
 
       const newBatchId = res.data.batch_id;
       setBatchId(newBatchId);
       setStep("processing");
+      setIsUploading(false);
 
       // Persist session
       session.setSession({
@@ -105,6 +112,7 @@ export default function Upload() {
       toast.info("Analysis started — processing in the background");
     } catch (err) {
       setError(String(err));
+      setIsUploading(false);
     }
   };
 
@@ -121,32 +129,54 @@ export default function Upload() {
     setProcessed(0);
     setTotal(0);
     setError("");
+    setIsUploading(false);
   };
 
   // Poll batch status
   useEffect(() => {
     if (step !== "processing" || !batchId) return;
-    const id = setInterval(async () => {
+    const MAX_POLL_TIME = 300000; // 5 minutes in ms
+    const startTime = Date.now();
+    let timeoutId: NodeJS.Timeout;
+
+    const poll = async () => {
+      const elapsed = Date.now() - startTime;
+      if (elapsed > MAX_POLL_TIME) {
+        setError("Processing is taking longer than expected. Check back later or contact support.");
+        return; // stop polling
+      }
       try {
         const res = await getBatchStatus(batchId);
-        if (!res.data) return;
-        setProcessed(Number(res.data.processed_count));
-        setTotal(Number(res.data.total_reviews));
-        if (res.data.status === "done") {
-          setStep("done");
-          session.setStatus("done");
-          session.setProcessedCount(Number(res.data.total_reviews));
-          toast.success(`Analysis complete — ${res.data.total_reviews} reviews processed`);
-          clearInterval(id);
-        }
-        if (res.data.status === "failed") {
-          setError("Processing failed on the server");
-          session.setStatus("failed");
-          clearInterval(id);
+        if (res.data) {
+          setProcessed(Number(res.data.processed_count));
+          setTotal(Number(res.data.total_reviews));
+          if (res.data.status === "done") {
+            const elapsedSinceStart = Date.now() - startTime;
+            const minProcessingTime = 2000;
+            const delay = Math.max(0, minProcessingTime - elapsedSinceStart);
+            
+            setTimeout(() => {
+              setStep("done");
+              session.setStatus("done");
+              session.setProcessedCount(Number(res.data.total_reviews));
+              toast.success(`Analysis complete — ${res.data.total_reviews} reviews processed`);
+            }, delay);
+            return;
+          }
+          if (res.data.status === "failed") {
+            setError("Processing failed on the server");
+            session.setStatus("failed");
+            return;
+          }
         }
       } catch { /* retry */ }
-    }, 100);
-    return () => clearInterval(id);
+      
+      const nextInterval = (Date.now() - startTime) < 10000 ? 500 : 2000;
+      timeoutId = setTimeout(poll, nextInterval);
+    };
+
+    timeoutId = setTimeout(poll, 500); // start first poll
+    return () => clearTimeout(timeoutId);
   }, [step, batchId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
@@ -285,7 +315,10 @@ export default function Upload() {
               <p className="text-2xl font-bold font-number">{preview.length.toLocaleString()} Records</p>
               <p className="text-xs text-muted-foreground">Estimated processing time: ~{Math.round(preview.length * 0.01 + 10)} seconds</p>
             </div>
-            <Button size="lg" onClick={handleSubmit} className="gap-2"><Zap className="w-4 h-4" />Confirm & Run Analysis</Button>
+            <Button size="lg" onClick={handleSubmit} disabled={isUploading} className="gap-2">
+              {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+              {isUploading ? "Uploading..." : "Confirm & Run Analysis"}
+            </Button>
           </div>
         )}
 

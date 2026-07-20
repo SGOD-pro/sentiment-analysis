@@ -33,9 +33,14 @@ def test_config_loads_from_env():
     get_settings.cache_clear()
 
 
-def test_config_defaults():
+def test_config_defaults(monkeypatch):
     """Defaults should be sensible when env vars aren't set."""
     from config import Settings
+
+    # Clear env vars that might override defaults
+    monkeypatch.delenv("AWS_REGION", raising=False)
+    monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
+    monkeypatch.delenv("LAMBDA_BATCH_SIZE", raising=False)
 
     # Construct directly without env to check defaults
     s = Settings(
@@ -43,6 +48,6 @@ def test_config_defaults():
         s3_bucket="x",
         lambda_function_name="x",
     )
-    assert s.aws_region == "us-east-1"
-    assert s.lambda_batch_size == 50
+    assert s.aws_region == "ap-south-1"
+    assert s.lambda_batch_size == 20
     assert s.max_upload_size_mb == 50

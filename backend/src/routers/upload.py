@@ -139,6 +139,21 @@ async def upload_csv(
         extra={"batch_id": batch_id, "total_reviews": len(rows), "upload_filename": file.filename},
     )
 
-    background_tasks.add_task(process_batch, batch_id)
+    import os
+    import json
+    import boto3
+    
+    function_name = os.environ.get("AWS_LAMBDA_FUNCTION_NAME")
+    if function_name:
+        log.info("triggering async lambda invocation", extra={"batch_id": batch_id, "function_name": function_name})
+        lambda_client = boto3.client("lambda", region_name=settings.aws_region)
+        lambda_client.invoke(
+            FunctionName=function_name,
+            InvocationType="Event",
+            Payload=json.dumps({"action": "process_batch", "batch_id": batch_id}).encode(),
+        )
+    else:
+        log.info("triggering background task (local dev)", extra={"batch_id": batch_id})
+        background_tasks.add_task(process_batch, batch_id)
 
     return ApiResponse(success=True, data={"batch_id": batch_id})
