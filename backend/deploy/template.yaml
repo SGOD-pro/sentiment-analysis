@@ -23,6 +23,10 @@ Globals:
         AWS_ENDPOINT_URL: ""
 
 Parameters:
+  FrontendOrigin:
+    Type: String
+    Default: "http://localhost:5173"
+    Description: Frontend origin URL for CORS
   S3BucketName:
     Type: String
     Default: sentimetric-prod-storage
@@ -188,7 +192,7 @@ Resources:
       StageName: $default
       CorsConfiguration:
         AllowOrigins:
-          - "*"    # restrict to your Vercel domain in production
+          - !Ref FrontendOrigin
         AllowMethods:
           - GET
           - POST

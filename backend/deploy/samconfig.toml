@@ -10,7 +10,7 @@ disable_rollback = false
 # No 'profile =' line — GitHub runners authenticate purely via
 # aws-actions/configure-aws-credentials, never a local AWS CLI profile.
 s3_prefix = "sentrix"
-parameter_overrides = "S3BucketName=\"sentimetric-prod-storage\" DynamoDBReviewsTable=\"Reviews\" DynamoDBBatchesTable=\"Batches\" DynamoDBAggregatesTable=\"Aggregates\""
+parameter_overrides = "FrontendOrigin=\"https://sentiment-analysis-peach-eta.vercel.app/\" S3BucketName=\"sentimetric-prod-storage\" DynamoDBReviewsTable=\"Reviews\" DynamoDBBatchesTable=\"Batches\" DynamoDBAggregatesTable=\"Aggregates\""
 image_repositories = []
 
 [default.build.parameters]
