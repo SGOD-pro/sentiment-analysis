@@ -26,6 +26,7 @@ class Tables:
     reviews: Any
     batches: Any
     aggregates: Any
+    corrections: Any
 
 
 _tables: Tables | None = None
@@ -50,6 +51,7 @@ def get_tables() -> Tables:
             reviews=ddb.Table(settings.dynamodb_reviews_table),
             batches=ddb.Table(settings.dynamodb_batches_table),
             aggregates=ddb.Table(settings.dynamodb_aggregates_table),
+            corrections=ddb.Table(settings.dynamodb_corrections_table),
         )
         log.info("DynamoDB tables initialized")
     return _tables

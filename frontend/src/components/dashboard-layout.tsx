@@ -16,7 +16,7 @@ export function DashboardPage({ sidebar, children }: DashboardPageProps) {
     <>
       <AppSidebar>{sidebar}</AppSidebar>
       <SidebarInset className="h-[calc(100svh-4.5rem)] overflow-hidden">
-        <header className="flex h-12 shrink-0 items-center gap-2 px-4">
+        <header className="flex h-12 shrink-0 items-center gap-2 px-4 bg-background/40 backdrop-blur-3xl">
           <SidebarTrigger className="-ml-1" />
           <Separator orientation="vertical" className="mr-2 data-[orientation=vertical]:h-4" />
         </header>

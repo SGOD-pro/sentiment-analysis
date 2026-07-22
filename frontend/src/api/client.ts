@@ -2,6 +2,7 @@ import type {
   ApiResponse,
   BatchStatus,
   CategorySummary,
+  Correction,
   IssueCount,
   Review,
   ReviewFilters,
@@ -77,6 +78,14 @@ export function getReview(reviewId: string, batchId: string) {
   const params = new URLSearchParams();
   params.set("batch_id", batchId);
   return request<Review>(`/api/reviews/${reviewId}?${params}`);
+}
+
+export function correctReview(reviewId: string, manualLabel: string) {
+  return request<Correction>(`/api/reviews/${reviewId}/correct`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ manual_label: manualLabel }),
+  });
 }
 
 export async function checkHealth(): Promise<boolean> {

@@ -290,41 +290,43 @@ Deployed API Gateway URL, both Lambda functions live in AWS Console
 
 Title
 
-Human Feedback Loop for Sentiment Correction (v2 — Deferred)
+Human Feedback Loop for Sentiment Correction
 
 Status
 
-Deferred to v2 — not started
+In Progress
 
 Goal
 
 Let users correct wrong sentiment predictions directly in the Reviews page,
-capturing (batch_id, review_id, text, original_label, manual_label,
-corrected_by, corrected_at) for future model retraining — reusing the same
+capturing (review_id, batch_id, text, label, manual_label, date) in a
+Corrections DynamoDB table for future model retraining — reusing the same
 confidence-margin audit methodology already proven during initial model
-development (see PROJECT.md's Manual Label Audit section).
+development.
 
-Why deferred, not built now
+Tasks
 
-This is a genuine, valuable ML pipeline feature, not scope creep — but it
-requires: a new DynamoDB table (Corrections) or extending Reviews with a
-correction sub-object, a new API endpoint (PATCH /api/reviews/:id/correct),
-frontend UI for inline correction, and a data-export path for eventually
-feeding corrections back into a retraining pipeline. This is a full phase
-of its own work, not a quick addition, and v1 is not blocked on it.
+- [x] CorrectionsTable in template.yaml (PK: correction_id, GSI: review-corrections-index)
+- [x] config.py — dynamodb_corrections_table field
+- [x] database.py — corrections added to Tables dataclass
+- [x] routers/corrections.py — PATCH /api/reviews/{review_id}/correct (upsert, no-op guard, cache invalidation)
+- [x] cache.py — cache_delete_prefix helper
+- [x] main.py — corrections router registered
+- [x] backend/scripts/export_corrections.py — DynamoDB → CSV (text, label, manual_label, date, review_id, batch_id)
+- [x] ml/retrain_with_corrections.py — merge corrections + retrain MLP + compare benchmark + swap artifacts if better
+- [x] frontend/types/index.ts — Correction interface, correction? on Review
+- [x] frontend/api/client.ts — correctReview()
+- [x] frontend/pages/Reviews.tsx — CorrectionPanel in dialog, correction badge on cards, optimistic state
 
-Planned tasks (v2, not now)
+Deliverables
 
-- Corrections table/field design (batch_id, text, original_label,
-  manual_label, corrected_by, corrected_at)
 - PATCH /api/reviews/:id/correct endpoint
-- Reviews page UI: inline correction control per review card
-- Export script: pull corrections, format for the existing ml/ audit
-  pipeline (same taxonomy structure as the original label_correction_loop.py)
-- Retraining trigger strategy (manual batch export vs continuous)
+- Corrections DynamoDB table (SAM-managed)
+- Inline correction UI in Reviews page (dialog + card badge)
+- export_corrections.py — produces CSV for retraining pipeline
+- retrain_with_corrections.py — full retrain-compare-swap pipeline
 
-Output (v2)
+Output (retraining pipeline)
 
-A documented, reusable feedback loop that closes the ML lifecycle loop —
-legitimate to describe as "production ML pipeline with human-in-the-loop
-retraining" once built, not before.
+Run export_corrections.py → retrain_with_corrections.py → if metrics improve,
+lambda/artifacts/mlp_weights.npz is replaced → CI/CD deploys updated model automatically.

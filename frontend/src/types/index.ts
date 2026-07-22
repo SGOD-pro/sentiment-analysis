@@ -54,7 +54,18 @@ export interface Review {
   issue_tag?: string;
   issue_distance?: string;
   cluster_source?: string;
+  correction?: Correction;
   [key: string]: unknown; // extra CSV columns
+}
+
+export interface Correction {
+  correction_id: string;
+  review_id: string;
+  batch_id: string;
+  text: string;
+  label: string;        // original model label
+  manual_label: string; // human-supplied correction
+  date: string;
 }
 
 export interface ReviewsPage {

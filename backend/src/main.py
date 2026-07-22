@@ -10,6 +10,11 @@ Example:
 """
 
 from contextlib import asynccontextmanager
+import sys
+from pathlib import Path
+
+# Add src/ to sys.path so that absolute imports work when running `uvicorn src.main:app` from the backend directory
+sys.path.insert(0, str(Path(__file__).parent))
 
 from dotenv import load_dotenv
 
@@ -24,6 +29,7 @@ from startup_check import run_aws_startup_checks
 from models import ApiResponse
 from routers.batches import router as batches_router
 from routers.categories import router as categories_router
+from routers.corrections import router as corrections_router
 from routers.issues import router as issues_router
 from routers.reviews import router as reviews_router
 from routers.trends import router as trends_router
@@ -55,6 +61,7 @@ app.include_router(trends_router)
 app.include_router(categories_router)
 app.include_router(issues_router)
 app.include_router(reviews_router)
+app.include_router(corrections_router)
 
 
 @app.get("/health", response_model=ApiResponse)

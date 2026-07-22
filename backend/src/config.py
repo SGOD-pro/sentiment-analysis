@@ -42,6 +42,11 @@ class Settings(BaseSettings):
         validation_alias="DYNAMODB_AGGREGATES_TABLE",
     )
 
+    dynamodb_corrections_table: str = Field(
+        default="Corrections",
+        validation_alias="DYNAMODB_CORRECTIONS_TABLE",
+    )
+
     s3_bucket: str = Field(
         default="sentimetric-prod-storage",
         validation_alias="S3_BUCKET_NAME",

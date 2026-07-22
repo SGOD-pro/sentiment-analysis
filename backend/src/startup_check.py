@@ -79,6 +79,21 @@ _TABLE_SCHEMAS = {
         ],
         "BillingMode": "PAY_PER_REQUEST",
     },
+    "corrections": {
+        "KeySchema": [{"AttributeName": "correction_id", "KeyType": "HASH"}],
+        "AttributeDefinitions": [
+            {"AttributeName": "correction_id", "AttributeType": "S"},
+            {"AttributeName": "review_id", "AttributeType": "S"},
+        ],
+        "GlobalSecondaryIndexes": [
+            {
+                "IndexName": "review-corrections-index",
+                "KeySchema": [{"AttributeName": "review_id", "KeyType": "HASH"}],
+                "Projection": {"ProjectionType": "ALL"},
+            }
+        ],
+        "BillingMode": "PAY_PER_REQUEST",
+    },
 }
 
 
@@ -88,6 +103,7 @@ def _check_dynamodb(settings) -> None:
         "reviews": settings.dynamodb_reviews_table,
         "batches": settings.dynamodb_batches_table,
         "aggregates": settings.dynamodb_aggregates_table,
+        "corrections": settings.dynamodb_corrections_table,
     }
 
     try:
@@ -240,6 +256,7 @@ def run_aws_startup_checks() -> None:
                 settings.dynamodb_reviews_table,
                 settings.dynamodb_batches_table,
                 settings.dynamodb_aggregates_table,
+                settings.dynamodb_corrections_table,
             ],
             "s3_bucket": settings.s3_bucket,
         },

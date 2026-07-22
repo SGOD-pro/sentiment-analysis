@@ -10,25 +10,117 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
 import { Slider } from "@/components/ui/slider";
 import { ChevronDown, ChevronRight, Clock, Filter, Search, Upload } from "lucide-react";
-import { getCategoriesSummary, getIssuesDistribution, getReviews } from "@/api/client";
+import { getCategoriesSummary, getIssuesDistribution, getReviews, correctReview } from "@/api/client";
 import { loadColumnMap } from "@/hooks/useColumnMap";
 import { useSessionStore } from "@/hooks/useSessionStore";
-import type { CategorySummary, IssueCount, Review, ReviewFilters } from "@/types";
+import type { Correction, CategorySummary, IssueCount, Review, ReviewFilters } from "@/types";
 import { DashboardPage } from "@/components/dashboard-layout";
 import { DateRangeFilter, type DateRangeValue } from "@/components/DateRangeFilter";
+import { cn } from "@/lib/utils";
 
 const SENT_STYLE: Record<string, string> = {
   positive: "chip-positive",
   neutral: "chip-neutral",
   negative: "chip-negative",
 };
+
+const SENT_LABELS = ["positive", "neutral", "negative"] as const;
+type Sentiment = typeof SENT_LABELS[number];
+
+function CorrectionPanel({ review, onCorrect }: {
+  review: Review;
+  onCorrect: (reviewId: string, label: string, correction: Correction) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [pendingLabel, setPendingLabel] = useState<Sentiment | null>(null);
+  const current = review.correction?.manual_label ?? review.sentiment;
+  const original = review.sentiment;
+
+  function handleCorrectClick(label: Sentiment) {
+    if (label === current || busy) return;
+    setPendingLabel(label);
+  }
+
+  async function confirmCorrection() {
+    if (!pendingLabel || busy) return;
+    setBusy(true);
+    const labelToSave = pendingLabel;
+    
+    try {
+      const res = await correctReview(review.review_id, labelToSave);
+      if (!res.success || !res.data) {
+        toast.error(res.message ?? "Failed to save correction");
+        return;
+      }
+      toast.success(`Marked as ${labelToSave}`);
+      onCorrect(review.review_id, labelToSave, res.data);
+    } catch {
+      toast.error("Network error saving correction");
+    } finally {
+      setBusy(false);
+      setPendingLabel(null);
+    }
+  }
+
+  return (
+    <div className="space-y-2">
+      <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+        {review.correction ? "Correction saved" : "Correct this prediction"}
+      </p>
+      <div className="flex gap-2">
+        {SENT_LABELS.map((label) => (
+          <button
+            key={label}
+            disabled={busy || label === current}
+            onClick={() => handleCorrectClick(label)}
+            className={`text-xs px-2.5 py-1 rounded-sm font-bold transition-all border ${
+              label === current
+                ? `${SENT_STYLE[label]} opacity-60 cursor-default`
+                : "border-border text-muted-foreground hover:text-foreground hover:border-primary"
+            }`}
+          >
+            {label.toUpperCase()}
+          </button>
+        ))}
+      </div>
+      {review.correction && (
+        <p className="text-[10px] text-muted-foreground">
+          Was: <span className={`font-bold ${SENT_STYLE[original]}`}>{original.toUpperCase()}</span>
+          {" → "}
+          Now: <span className={`font-bold ${SENT_STYLE[review.correction.manual_label]}`}>{review.correction.manual_label.toUpperCase()}</span>
+        </p>
+      )}
+
+      {/* Confirmation Dialog */}
+      <Dialog open={pendingLabel !== null} onOpenChange={(open) => { if (!open && !busy) setPendingLabel(null); }}>
+        <DialogContent className="w-80">
+          <DialogHeader>
+            <DialogTitle>Confirm Correction</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to manually override the sentiment prediction to{" "}
+              <strong className={cn(pendingLabel ? SENT_STYLE[pendingLabel] : "", "font-bold text-xs p-1 rounded")}>{pendingLabel?.toUpperCase()}</strong>?
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="mt-4">
+            <Button variant="outline" onClick={() => setPendingLabel(null)} disabled={busy}>
+              Cancel
+            </Button>
+            <Button onClick={confirmCorrection} disabled={busy}>
+              {busy ? "Saving..." : "Confirm"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
 
 function FilterSection({ label, children, defaultOpen = false }: { label: string; children: React.ReactNode; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -59,6 +151,12 @@ function ReviewCard({ review, colMap, onClick }: {
             <span className={`text-xs font-bold px-2 py-0.5 rounded-sm ${SENT_STYLE[review.sentiment]}`}>
               {review.sentiment.toUpperCase()}
             </span>
+            {review.correction && (
+              <span className={`text-xs font-bold px-2 py-0.5 rounded-sm border border-dashed ${SENT_STYLE[review.correction.manual_label]}`}
+                title={`Corrected: ${review.sentiment} → ${review.correction.manual_label}`}>
+                ✏ {review.correction.manual_label.toUpperCase()}
+              </span>
+            )}
             {review.category && (
               <Badge variant="secondary" className="text-xs font-normal">{review.category}</Badge>
             )}
@@ -101,6 +199,15 @@ export default function Reviews() {
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Review | null>(null);
+
+  // Optimistic correction map: review_id -> Correction
+  const [corrections, setCorrections] = useState<Record<string, Correction>>({});
+
+  function handleCorrect(reviewId: string, _label: string, correction: Correction) {
+    setCorrections((prev) => ({ ...prev, [reviewId]: correction }));
+    // Also update the selected dialog if it's the same review
+    setSelected((prev) => prev && prev.review_id === reviewId ? { ...prev, correction } : prev);
+  }
 
   // Filter state
   const [sentiment, setSentiment] = useState("all");
@@ -242,7 +349,12 @@ export default function Reviews() {
           : filtered.length === 0
             ? <p className="text-center text-muted-foreground py-16">No reviews match your filters.</p>
             : filtered.map((r) => (
-              <ReviewCard key={r.review_id} review={r} colMap={colMap} onClick={() => setSelected(r)} />
+              <ReviewCard
+                key={r.review_id}
+                review={{ ...r, correction: corrections[r.review_id] ?? r.correction }}
+                colMap={colMap}
+                onClick={() => setSelected({ ...r, correction: corrections[r.review_id] ?? r.correction })}
+              />
             ))}
       </div>
 
@@ -270,6 +382,7 @@ export default function Reviews() {
                 <span className={`text-xs font-bold px-2 py-0.5 rounded-sm ${SENT_STYLE[selected.sentiment]}`}>
                   {selected.sentiment.toUpperCase()}
                 </span>
+                {selected.correction && <Badge variant="secondary" className="bg-amber-100 text-amber-800">Corrected</Badge>}
                 {selected.issue_tag && <Badge variant="outline">{selected.issue_tag.replaceAll("_", " ")}</Badge>}
                 {selected.category && <Badge variant="secondary">{selected.category}</Badge>}
               </div>
@@ -285,6 +398,8 @@ export default function Reviews() {
                   <div key={col}><p className="text-muted-foreground font-bold uppercase mb-1">{col}</p><p>{String(selected[col] ?? "—")}</p></div>
                 ))}
               </div>
+              <Separator />
+              <CorrectionPanel review={selected} onCorrect={handleCorrect} />
             </div>
           )}
         </DialogContent>

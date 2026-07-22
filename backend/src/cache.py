@@ -64,3 +64,16 @@ def cache_set(key: str, value: dict) -> None:
         r.set(key, json.dumps(value, default=str))
     except Exception:
         log.warning("redis cache_set error — skipping", extra={"key": key[:80]})
+
+
+def cache_delete_prefix(prefix: str) -> None:
+    """Delete all keys matching prefix*. Silently skips on any error."""
+    r = get_redis()
+    if r is None:
+        return
+    try:
+        keys = r.keys(f"{prefix}*")
+        if keys:
+            r.delete(*keys)
+    except Exception:
+        log.warning("redis cache_delete_prefix error — skipping", extra={"prefix": prefix[:80]})
