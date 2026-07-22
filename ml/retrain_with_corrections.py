@@ -6,32 +6,10 @@ If the new model beats the current one on BOTH:
   - neg_recall  >= current neg_recall
   - frozen_recall >= current frozen_recall
 then it replaces lambda/artifacts/mlp_weights.npz in-place.
-
-Usage (Colab / local with GPU):
-    python ml/retrain_with_corrections.py \
-        --corrections corrections_export.csv \
-        --embeddings  /path/to/bge_clean_embeddings.npy \
-        --metadata    /path/to/bge_clean_metadata.parquet \
-        --train-idx   /path/to/clean_train_idx_v4.npy \
-        --test-idx    /path/to/clean_test_idx_v4.npy \
-        --frozen-eval /path/to/difficult_neutral_eval_FROZEN.csv \
-        --artifacts   lambda/artifacts
-
-The corrections CSV must have columns: text, label, manual_label
-(same format as export_corrections.py produces).
-Corrections are treated as label overrides: wherever a correction_id
-matches a row in the training set, its label is flipped to manual_label.
-New correction rows (text not already in the dataset) are appended with
-an embedding pass using the BGE ONNX model.
-
-ponytail: embedding new correction texts requires onnxruntime + tokenizers
-locally; if you don't have them, run on Colab where the full ML env is set up.
-Upgrade path: add a --skip-new-embeddings flag that logs a warning and only
-applies label flips to existing training data.
 """
 
 import argparse
-import shutil
+import os
 import sys
 from pathlib import Path
 
@@ -102,9 +80,13 @@ def train_mlp(X_train: np.ndarray, y_train: np.ndarray, device: str) -> MLP:
 
     X_t = torch.tensor(X_train, dtype=torch.float32)
     y_t = torch.tensor(y_train, dtype=torch.long)
+    
+    gen = torch.Generator()
+    gen.manual_seed(42)
+    
     loader = DataLoader(
         TensorDataset(X_t, y_t), batch_size=256, shuffle=True,
-        generator=torch.Generator().manual_seed(42),
+        generator=gen,
     )
 
     torch.manual_seed(42)
@@ -174,75 +156,86 @@ def evaluate(model: MLP, X: np.ndarray, y: np.ndarray, device: str, label: str) 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--corrections", required=True, help="CSV from export_corrections.py")
-    parser.add_argument("--embeddings", required=True, help="bge_clean_embeddings.npy")
-    parser.add_argument("--metadata", required=True, help="bge_clean_metadata.parquet")
-    parser.add_argument("--train-idx", required=True, help="clean_train_idx_v4.npy")
-    parser.add_argument("--test-idx", required=True, help="clean_test_idx_v4.npy")
-    parser.add_argument("--frozen-eval", required=True, help="difficult_neutral_eval_FROZEN.csv")
     parser.add_argument("--artifacts", default="lambda/artifacts", help="Lambda artifacts directory")
-    parser.add_argument("--skip-new-embeddings", action="store_true",
-                        help="Only flip labels for existing training rows; skip embedding new texts")
+    parser.add_argument("--min-corrections", type=int, default=os.environ.get("MIN_CORRECTIONS", 10))
     args = parser.parse_args()
 
     artifacts_dir = Path(args.artifacts)
+    data_dir = Path(os.environ.get("DATA_DIR", "ml/training_data"))
+    
     corrections = pd.read_csv(args.corrections)
+    if len(corrections) < args.min_corrections:
+        print(f"Skipping retrain: {len(corrections)} corrections found, minimum is {args.min_corrections}")
+        sys.exit(0)
+    
     print(f"Loaded {len(corrections)} corrections")
 
-    df = pd.read_parquet(args.metadata)
-    X = np.load(args.embeddings, mmap_mode="r")
-    train_idx = np.load(args.train_idx)
-    test_idx = np.load(args.test_idx)
-    frozen_eval = pd.read_csv(args.frozen_eval)
+    # Load permanent data files
+    df = pd.read_parquet(data_dir / "bge_clean_metadata.parquet")
+    X = np.load(data_dir / "bge_clean_embeddings.npy")
+    train_idx = np.load(data_dir / "clean_train_idx_v4.npy").tolist()
+    test_idx = np.load(data_dir / "clean_test_idx_v4.npy").tolist()
+    frozen_eval = pd.read_csv(data_dir / "difficult_neutral_eval_FROZEN.csv")
+
+    corrected_metadata_path = data_dir / "bge_clean_metadata_corrected.parquet"
+    if corrected_metadata_path.exists():
+        print("WARNING: bge_clean_metadata_corrected.parquet exists! Using bge_clean_metadata.parquet as authoritative.")
 
     le = LabelEncoder().fit(LABEL_NAMES)
 
-    # Apply label flips for corrections that match existing training data
-    label_overrides: dict[int, int] = {}
     new_texts, new_labels = [], []
 
     for _, row in corrections.iterrows():
-        matches = df.index[df["text"] == row["text"]].tolist()
-        if matches:
-            for idx in matches:
-                if idx in set(train_idx):
-                    label_overrides[idx] = le.transform([row["manual_label"]])[0]
-        elif not args.skip_new_embeddings:
+        review_id = row["review_id"]
+        # Look up review_id in df["id"]
+        match_idx = df.index[df["id"] == review_id].tolist()
+        
+        if match_idx:
+            # Update existing label
+            df.loc[match_idx[0], "label"] = row["manual_label"]
+        else:
+            # New text
             new_texts.append(row["text"])
             new_labels.append(row["manual_label"])
 
-    print(f"Label flips in existing training set: {len(label_overrides)}")
     print(f"New correction texts to embed: {len(new_texts)}")
-
-    y_train = le.transform(df["label"].iloc[train_idx].values)
-    for idx, new_label in label_overrides.items():
-        position = np.where(train_idx == idx)[0]
-        if position.size:
-            y_train[position[0]] = new_label
-
-    X_train = X[train_idx].copy()
-
+    
     if new_texts:
         new_X = embed_texts(new_texts, artifacts_dir)
-        new_y = le.transform(new_labels)
-        X_train = np.vstack([X_train, new_X])
-        y_train = np.concatenate([y_train, new_y])
+        X = np.vstack([X, new_X])
+        
+        new_df = pd.DataFrame({
+            "id": ["new_" + str(i) for i in range(len(new_texts))],
+            "text": new_texts,
+            "label": new_labels
+        })
+        df = pd.concat([df, new_df], ignore_index=True)
+        
+        # Append new row index to train_idx ONLY
+        start_new_idx = len(X) - len(new_texts)
+        train_idx.extend(range(start_new_idx, len(X)))
+
+    train_idx_arr = np.array(train_idx)
+    test_idx_arr = np.array(test_idx)
+
+    y_train = le.transform(df["label"].iloc[train_idx_arr].values)
+    X_train = X[train_idx_arr]
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"\nTraining on {device} with {len(X_train)} samples ({len(label_overrides)} flipped, {len(new_texts)} new)")
+    print(f"\nTraining on {device} with {len(X_train)} samples ({len(corrections) - len(new_texts)} existing modified, {len(new_texts)} new)")
 
     model = train_mlp(X_train, y_train, device)
 
     # Evaluate on standard test set
-    y_test = le.transform(df["label"].iloc[test_idx].values)
-    test_metrics = evaluate(model, X[test_idx], y_test, device, "Standard test set (v4 + corrections)")
+    y_test = le.transform(df["label"].iloc[test_idx_arr].values)
+    test_metrics = evaluate(model, X[test_idx_arr], y_test, device, "Standard test set (v4 + corrections)")
 
-    # Evaluate on frozen difficult-neutral slice — the real signal
+    # Evaluate on frozen difficult-neutral slice
     frozen_indices = df.index[df["id"].isin(frozen_eval["id"])].values
     frozen_positions = np.array([df.index.get_loc(i) for i in frozen_indices])
     y_frozen = le.transform(df["label"].iloc[frozen_positions].values)
     frozen_metrics = evaluate(model, X[frozen_positions], y_frozen, device, "FROZEN difficult-neutral slice")
 
-    # Gate: only swap if both key metrics are >= current
     beats_neg = test_metrics["neg_recall"] >= CURRENT_NEG_RECALL
     beats_frozen = frozen_metrics["frozen_recall"] >= CURRENT_FROZEN_RECALL
 
@@ -251,17 +244,13 @@ def main() -> None:
     print(f"frozen_recall improvement: {'✓' if beats_frozen else '✗'}  {frozen_metrics['frozen_recall']:.4f} vs {CURRENT_FROZEN_RECALL}")
 
     if beats_neg and beats_frozen:
-        # Export to numpy and overwrite artifacts
         state_dict = model.cpu().state_dict()
         weights = {name: t.numpy() for name, t in state_dict.items()}
         out_path = artifacts_dir / "mlp_weights.npz"
         np.savez(str(out_path), **weights)
         print(f"\n✅  New model is better — artifacts replaced at {out_path}")
-        print("CI/CD will pick up the updated artifact on next deploy.")
     else:
         print("\n⚠️  New model did not beat the current benchmark on both metrics.")
-        print("Artifacts unchanged — current model stays in production.")
-        print("Collect more corrections or review the label flips before retrying.")
         sys.exit(1)
 
 

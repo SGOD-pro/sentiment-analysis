@@ -77,3 +77,32 @@ Quantized ONNX Encoder (BGE-small-en-v1.5, INT8, ~35MB)
 - **Deployment:** AWS Lambda + API Gateway + DynamoDB
 - **Backend:** FastAPI (Python)
 - **Frontend:** React + TypeScript + Tailwind CSS v4 + Recharts (Vite)
+
+---
+
+## ML Pipeline Retraining & Validation (CI/CD)
+
+The project includes an automated closed-loop ML retraining pipeline using GitHub Actions (`ml_retrain.yml`). When users make sentiment corrections in the dashboard, these corrections are stored in DynamoDB and can be used to continuously improve the model.
+
+### How to Retrain and Validate
+1. **Navigate to GitHub Actions** and select the **ML Retrain** workflow.
+2. **Trigger the workflow manually**. You can configure the `min_corrections` threshold (default is 10) to avoid retraining on statistically insignificant data.
+3. **Automated Export & Retrain**: The pipeline exports human corrections from DynamoDB and merges them with the core training dataset. New texts are automatically embedded using the same ONNX encoder, and the MLP is retrained.
+4. **Dual Quality Gates**: The newly trained model is validated against two strict gates:
+   - **Gate 1 (Standard Test Set)**: Negative recall must remain `>= 0.7915`.
+   - **Gate 2 (Frozen Eval Slice)**: Neutral recall must remain `>= 0.2967` (evaluated against a hand-verified 300-row difficult-neutral set).
+5. **Conditional Deployment**:
+   - If **both gates pass**, the new `mlp_weights.npz` artifact is uploaded to S3, and the main CI/CD deployment pipeline is triggered automatically. The new model goes live with zero manual intervention.
+   - If **either gate fails**, the pipeline halts successfully (preventing a degradation in production) and the artifacts remain unchanged.
+
+### Required S3 Artifacts Setup
+The CI/CD pipeline deploys automatically, but the **ML Retraining pipeline requires the original training data** to exist in S3. 
+
+While the inference artifacts (`model_quantized.onnx`, `mlp_weights.npz`, `issue_centroids.npy`) are already stored in S3 for deployment under `s3://<bucket>/ml-artifacts/lambda_deploy_artifacts/`, you must **newly upload the following training splits** into `s3://<bucket>/ml-artifacts/training_data/` before running the retrain pipeline for the first time:
+
+- `bge_clean_embeddings.npy` (full embedding matrix)
+- `bge_clean_metadata.parquet` (metadata + corrected labels)
+- `clean_train_idx_v4.npy` (train split indices, leak-free)
+- `clean_test_idx_v4.npy` (test split indices, DO NOT modify)
+- `difficult_neutral_eval_FROZEN.csv` (300-row frozen eval, DO NOT modify)
+

@@ -86,3 +86,85 @@ def correct_review(review_id: str, body: CorrectionRequest):
     cache_delete_prefix(f"reviews:{review['batch_id']}:")
 
     return ApiResponse(success=True, data=correction)
+
+
+@router.get("/admin/corrections")
+def get_admin_corrections(format: str | None = None):
+    """
+    Admin endpoint to fetch all human corrections.
+    TODO(auth): This endpoint has NO authentication in v1. Add a token/session guard
+                before any public or multi-tenant deployment.
+    """
+    tables = get_tables()
+
+    # Full scan of corrections
+    response = tables.corrections.scan()
+    items = response.get("Items", [])
+    while "LastEvaluatedKey" in response:
+        response = tables.corrections.scan(ExclusiveStartKey=response["LastEvaluatedKey"])
+        items.extend(response.get("Items", []))
+
+    # Fetch confidence_margin and category from Reviews table in chunks of 100
+    review_ids = list({item["review_id"] for item in items})
+    reviews_map = {}
+
+    if review_ids:
+        # We need the low-level dynamodb client for batch_get_item
+        import boto3
+        dynamodb = boto3.resource("dynamodb", region_name="ap-south-1")
+        
+        for i in range(0, len(review_ids), 100):
+            batch_keys = [{"review_id": r_id} for r_id in review_ids[i:i+100]]
+            batch_response = dynamodb.batch_get_item(
+                RequestItems={
+                    tables.reviews.name: {
+                        "Keys": batch_keys,
+                        "ProjectionExpression": "review_id, confidence_margin, category"
+                    }
+                }
+            )
+            batch_reviews = batch_response.get("Responses", {}).get(tables.reviews.name, [])
+            for br in batch_reviews:
+                reviews_map[br["review_id"]] = br
+
+    for item in items:
+        r_info = reviews_map.get(item["review_id"], {})
+        if "confidence_margin" in r_info:
+            item["confidence_margin"] = str(r_info["confidence_margin"])
+        if "category" in r_info:
+            item["category"] = r_info["category"]
+
+    if format == "csv":
+        import csv
+        from io import StringIO
+        from fastapi.responses import StreamingResponse
+        
+        output = StringIO()
+        writer = csv.writer(output)
+        # Must match export_corrections.py and retrain_with_corrections.py exactly
+        writer.writerow(["text", "label", "manual_label", "date", "review_id", "batch_id"])
+        for item in items:
+            writer.writerow([
+                item.get("text", ""),
+                item.get("label", ""),
+                item.get("manual_label", ""),
+                item.get("date", ""),
+                item.get("review_id", ""),
+                item.get("batch_id", "")
+            ])
+        
+        output.seek(0)
+        return StreamingResponse(
+            iter([output.getvalue()]),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=corrections_export.csv"}
+        )
+
+    batch_count = len(set(item.get("batch_id") for item in items if item.get("batch_id")))
+    
+    return ApiResponse(success=True, data={
+        "corrections": items,
+        "total": len(items),
+        "batch_count": batch_count
+    })
+

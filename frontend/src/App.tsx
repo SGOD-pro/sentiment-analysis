@@ -10,6 +10,7 @@ import Reviews from "./pages/Reviews";
 import Reports from "./pages/Reports";
 import Settings from "./pages/Settings";
 import UploadPage from "./pages/Upload";
+import Admin from "./pages/Admin";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { useSessionStore } from "@/hooks/useSessionStore";
 import GooeyNav from "./components/GooeyNav";
@@ -218,6 +219,7 @@ export default function App() {
         {/* Standalone pages – no top nav */}
         <Route path="/settings" element={<Settings />} />
         <Route path="/upload" element={<UploadPage />} />
+        <Route path="/admin" element={<Admin />} />
       </Routes>
       <Toaster richColors position="top-right" />
     </>

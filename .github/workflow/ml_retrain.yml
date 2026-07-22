@@ -1,0 +1,200 @@
+name: ML Retrain
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Manual trigger only. Go to Actions tab → "ML Retrain" → Run workflow.
+#
+# What this does:
+#   1. Exports human corrections from DynamoDB CorrectionsTable.
+#   2. Gates on min_corrections to avoid retraining on statistically trivial data.
+#   3. Retrains the MLP with label flips / new correction embeddings.
+#   4. Applies dual quality gates inside retrain_with_corrections.py:
+#        neg_recall  >= 0.7915  (standard test set)
+#        frozen_recall >= 0.2967 (300-row hand-verified difficult-neutral slice)
+#   5. If the model improved: uploads new mlp_weights.npz to S3 and triggers
+#      a deploy via the main ci_cd_pipeline.yml (force_ml=true).
+#   6. If the model did NOT improve: prints why, exits 0 (gate working = success).
+#
+# Closed loop: user correction → DynamoDB → export → retrain → gate →
+#              S3 upload → deploy triggered automatically.
+# ──────────────────────────────────────────────────────────────────────────────
+on:
+  workflow_dispatch:
+    inputs:
+      min_corrections:
+        description: "Minimum new corrections required before attempting retrain"
+        type: number
+        default: 10
+
+jobs:
+  retrain:
+    name: "🔁 Retrain ML Model with Corrections"
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. AWS credentials ───────────────────────────────────────────────────
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-south-1
+
+      # ── 3. Python ────────────────────────────────────────────────────────────
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # ── 4. Install uv + ML training deps ─────────────────────────────────────
+      # Full ML training environment: numpy, scikit-learn, torch, sentence-transformers.
+      # NOT the lambda runtime subset (onnxruntime-only) — this is the training env.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+          enable-cache: false
+
+      - name: Install ML training dependencies
+        working-directory: ml
+        run: |
+          uv pip install --system \
+            numpy \
+            pandas \
+            scikit-learn \
+            torch \
+            sentence-transformers \
+            onnxruntime \
+            tokenizers \
+            pyarrow \
+            boto3 \
+            python-dotenv
+
+      # ── 5. Pull current ML artifacts from S3 ──────────────────────────────────
+      # Includes mlp_weights.npz (baseline to compare against after retrain).
+      # difficult_neutral_eval_FROZEN.csv is pulled here if not committed to repo.
+      # NOTE: If you commit difficult_neutral_eval_FROZEN.csv to ml/ directly,
+      #       you can remove the --include for it below (300 rows, ground-truth only).
+      - name: Pull ML artifacts from S3
+        run: |
+          echo "📥 Syncing lambda/artifacts/ from S3 (includes mlp_weights.npz baseline)..."
+          mkdir -p lambda/artifacts
+          aws s3 sync \
+            "s3://${{ secrets.S3_BUCKET_NAME }}/ml-artifacts/lambda_deploy_artifacts/" \
+            lambda/artifacts/ \
+            --exclude "bge_onnx_fp32/*"
+          echo "✅ Artifacts synced:"
+          find lambda/artifacts -type f -exec du -h {} \;
+
+          echo ""
+          echo "📥 Pulling frozen eval slice + training index files from S3..."
+          aws s3 sync \
+            "s3://${{ secrets.S3_BUCKET_NAME }}/ml-artifacts/training_data/" \
+            ml/training_data/ \
+            --exclude "*" \
+            --include "bge_clean_embeddings.npy" \
+            --include "bge_clean_metadata.parquet" \
+            --include "clean_train_idx_v4.npy" \
+            --include "clean_test_idx_v4.npy" \
+            --include "difficult_neutral_eval_FROZEN.csv"
+          echo "✅ Training data synced:"
+          ls -lh ml/training_data/
+
+      # ── 6. Export corrections from DynamoDB ───────────────────────────────────
+      - name: Export corrections from DynamoDB
+        run: |
+          python backend/scripts/export_corrections.py \
+            --out corrections_export.csv \
+            --table "${{ secrets.DYNAMODB_CORRECTIONS_TABLE || 'Corrections' }}"
+          echo "📋 Corrections exported:"
+          wc -l corrections_export.csv || echo "File not found"
+        env:
+          AWS_DEFAULT_REGION: ap-south-1
+
+      # ── 7. Check minimum correction count ─────────────────────────────────────
+      - name: Check correction count gate
+        run: |
+          # Count data rows (subtract 1 for header)
+          ROWS=$(wc -l < corrections_export.csv)
+          DATA_ROWS=$((ROWS - 1))
+          MIN=${{ inputs.min_corrections }}
+
+          echo "Found $DATA_ROWS corrections. Minimum required: $MIN"
+
+          if [ "$DATA_ROWS" -lt "$MIN" ]; then
+            echo "Only $DATA_ROWS corrections found, minimum is $MIN. Skipping retrain."
+            echo "Collect more corrections in the dashboard before retraining."
+            exit 0
+          fi
+
+          echo "✅ Correction count ($DATA_ROWS) meets minimum ($MIN). Proceeding with retrain."
+
+      # ── 8. Hash mlp_weights.npz before retrain (for change detection) ─────────
+      - name: Hash mlp_weights.npz pre-retrain
+        id: pre_hash
+        run: |
+          HASH=$(sha256sum lambda/artifacts/mlp_weights.npz | awk '{print $1}')
+          echo "hash=$HASH" >> "$GITHUB_OUTPUT"
+          echo "Pre-retrain hash: $HASH"
+
+      # ── 9. Run retrain_with_corrections.py ────────────────────────────────────
+      # retrain_with_corrections.py contains the dual quality gate:
+      #   neg_recall  >= 0.7915 (standard test set)
+      #   frozen_recall >= 0.2967 (difficult_neutral_eval_FROZEN.csv)
+      # If both gates pass → overwrites lambda/artifacts/mlp_weights.npz in place.
+      # If either gate fails → artifacts unchanged, script exits 1.
+      - name: Retrain model with corrections
+        run: |
+          python ml/retrain_with_corrections.py \
+            --corrections corrections_export.csv \
+            --artifacts   lambda/artifacts
+        continue-on-error: true
+        id: retrain
+        env:
+          DATA_DIR: "ml/training_data"
+
+      # ── 10. Check if mlp_weights.npz was modified by the retrain ──────────────
+      - name: Check if model improved (hash comparison)
+        id: model_changed
+        run: |
+          NEW_HASH=$(sha256sum lambda/artifacts/mlp_weights.npz | awk '{print $1}')
+          echo "Pre-retrain hash:  ${{ steps.pre_hash.outputs.hash }}"
+          echo "Post-retrain hash: $NEW_HASH"
+
+          if [ "$NEW_HASH" != "${{ steps.pre_hash.outputs.hash }}" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "✅ mlp_weights.npz was updated — model passed quality gates."
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "⚠️  mlp_weights.npz unchanged — retrained model did not pass quality gates."
+            echo "Retrained model did not pass quality gates. Production model unchanged. See retrain output above."
+          fi
+
+      # ── 11a. Upload new mlp_weights.npz to S3 (only if model improved) ────────
+      - name: Upload improved mlp_weights.npz to S3
+        if: steps.model_changed.outputs.changed == 'true'
+        run: |
+          echo "📤 Uploading new mlp_weights.npz to S3..."
+          aws s3 cp lambda/artifacts/mlp_weights.npz \
+            s3://${{ secrets.S3_BUCKET_NAME }}/ml-artifacts/lambda_deploy_artifacts/mlp_weights.npz
+          echo "✅ Uploaded."
+
+      # ── 11b. Trigger main CI/CD pipeline deploy-backend job ───────────────────
+      # Uses workflow_dispatch with force_ml=true so the existing pipeline picks
+      # up the updated mlp_weights.npz from S3 and redeploys MLInferenceFunction.
+      - name: Trigger Auto Deploy via ci_cd_pipeline.yml
+        if: steps.model_changed.outputs.changed == 'true'
+        run: |
+          curl -X POST \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/${{ github.repository }}/actions/workflows/ci_cd_pipeline.yml/dispatches \
+            -d '{"ref":"main","inputs":{"force_ml":"true"}}'
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  ✅ Model improved. New mlp_weights.npz uploaded to S3."
+          echo "     Auto Deployment via ci_cd_pipeline.yml triggered automatically."
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
