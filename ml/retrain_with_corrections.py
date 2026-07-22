@@ -158,6 +158,10 @@ def main() -> None:
     parser.add_argument("--corrections", required=True, help="CSV from export_corrections.py")
     parser.add_argument("--artifacts", default="lambda/artifacts", help="Lambda artifacts directory")
     parser.add_argument("--min-corrections", type=int, default=os.environ.get("MIN_CORRECTIONS", 10))
+    parser.add_argument("--min-volume", type=int, default=int(os.environ.get("MIN_VOLUME", 2)),
+                        help="Independent sessions required for new-text corrections (default 2)")
+    parser.add_argument("--suspicious-threshold", type=float, default=0.70,
+                        help="If a session's corrections are >N%% toward one label, flag it (default 0.70)")
     args = parser.parse_args()
 
     artifacts_dir = Path(args.artifacts)
@@ -168,9 +172,38 @@ def main() -> None:
         print(f"Skipping retrain: {len(corrections)} corrections found, minimum is {args.min_corrections}")
         sys.exit(0)
     
-    print(f"Loaded {len(corrections)} corrections")
+    print(f"Loaded {len(corrections)} raw corrections")
 
-    # Load permanent data files
+    # ── Step 1: Suspicious session detection ───────────────────────────
+    # If a single session's corrections are >70% toward one label,
+    # exclude that session entirely — likely random/adversarial.
+    if "correction_source_session_id" in corrections.columns:
+        flagged_sessions = set()
+        session_groups = corrections.groupby("correction_source_session_id")
+        for session_id, group in session_groups:
+            if not session_id or len(group) < 3:
+                # Need at least 3 corrections to judge a distribution
+                continue
+            label_counts = group["manual_label"].value_counts(normalize=True)
+            dominant_ratio = label_counts.iloc[0]
+            if dominant_ratio > args.suspicious_threshold:
+                dominant_label = label_counts.index[0]
+                flagged_sessions.add(session_id)
+                print(f"⚠️  SUSPICIOUS SESSION {session_id}: "
+                      f"{len(group)} corrections, {dominant_ratio:.0%} → '{dominant_label}' — EXCLUDED")
+
+        if flagged_sessions:
+            before = len(corrections)
+            corrections = corrections[~corrections["correction_source_session_id"].isin(flagged_sessions)]
+            print(f"Excluded {before - len(corrections)} corrections from {len(flagged_sessions)} suspicious session(s)")
+    else:
+        print("WARNING: correction_source_session_id column missing — skipping session check")
+
+    if len(corrections) < args.min_corrections:
+        print(f"After filtering: {len(corrections)} corrections remain, minimum is {args.min_corrections}")
+        sys.exit(0)
+
+    # ── Step 2: Load training data ─────────────────────────────────────
     df = pd.read_parquet(data_dir / "bge_clean_metadata.parquet")
     X = np.load(data_dir / "bge_clean_embeddings.npy")
     train_idx = np.load(data_dir / "clean_train_idx_v4.npy").tolist()
@@ -183,23 +216,64 @@ def main() -> None:
 
     le = LabelEncoder().fit(LABEL_NAMES)
 
+    # ── Step 3: Confidence-based trust weight + volume gate ────────────
+    # For existing v4 texts: single correction is sufficient (model got
+    # a verified sample wrong), but apply confidence weighting.
+    # For new texts: require min_volume independent sessions.
+    existing_ids = set(df["id"].values)
     new_texts, new_labels = [], []
+    applied_existing, skipped_high_conf, skipped_volume = 0, 0, 0
 
-    for _, row in corrections.iterrows():
-        review_id = row["review_id"]
-        # Look up review_id in df["id"]
-        match_idx = df.index[df["id"] == review_id].tolist()
-        
-        if match_idx:
-            # Update existing label
-            df.loc[match_idx[0], "label"] = row["manual_label"]
+    # Group corrections by review_id to check volume
+    review_groups = corrections.groupby("review_id")
+
+    for review_id, group in review_groups:
+        manual_label = group["manual_label"].mode().iloc[0]  # majority vote
+
+        if review_id in existing_ids:
+            # Existing v4 text — single correction is meaningful
+            match_idx = df.index[df["id"] == review_id].tolist()
+            if not match_idx:
+                continue
+
+            # Confidence trust weight check
+            margin = 0.0
+            if "confidence_margin" in group.columns:
+                try:
+                    margin = float(group["confidence_margin"].iloc[0])
+                except (ValueError, TypeError):
+                    margin = 0.0
+
+            if margin > 0.70:
+                # ponytail: high-conf disagreement gets weight=0.5 treatment.
+                # For now, we flag but still include — the quality gates are
+                # the hard stop. A future iteration could use sample_weight in
+                # the DataLoader to actually scale the loss.
+                skipped_high_conf += 1
+                print(f"  ⚡ High-confidence override ({margin:.2f}) on {review_id} → flagged")
+
+            df.loc[match_idx[0], "label"] = manual_label
+            applied_existing += 1
         else:
-            # New text
-            new_texts.append(row["text"])
-            new_labels.append(row["manual_label"])
+            # New text — require N independent sessions
+            if "correction_source_session_id" in group.columns:
+                unique_sessions = group["correction_source_session_id"].nunique()
+            else:
+                unique_sessions = len(group)
 
-    print(f"New correction texts to embed: {len(new_texts)}")
-    
+            if unique_sessions < args.min_volume:
+                skipped_volume += 1
+                continue
+
+            new_texts.append(group["text"].iloc[0])
+            new_labels.append(manual_label)
+
+    print(f"\n── Trust scoring summary ──")
+    print(f"  Existing texts updated:    {applied_existing}")
+    print(f"  High-conf flagged:         {skipped_high_conf}")
+    print(f"  New texts accepted:        {len(new_texts)}")
+    print(f"  New texts skipped (volume): {skipped_volume}")
+
     if new_texts:
         new_X = embed_texts(new_texts, artifacts_dir)
         X = np.vstack([X, new_X])
@@ -222,7 +296,8 @@ def main() -> None:
     X_train = X[train_idx_arr]
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"\nTraining on {device} with {len(X_train)} samples ({len(corrections) - len(new_texts)} existing modified, {len(new_texts)} new)")
+    total_applied = applied_existing + len(new_texts)
+    print(f"\nTraining on {device} with {len(X_train)} samples ({applied_existing} existing modified, {len(new_texts)} new)")
 
     model = train_mlp(X_train, y_train, device)
 

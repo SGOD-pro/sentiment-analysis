@@ -54,7 +54,7 @@ function CorrectionPanel({ review, onCorrect }: {
     const labelToSave = pendingLabel;
     
     try {
-      const res = await correctReview(review.review_id, labelToSave);
+      const res = await correctReview(review.review_id, labelToSave, review.batch_id);
       if (!res.success || !res.data) {
         toast.error(res.message ?? "Failed to save correction");
         return;

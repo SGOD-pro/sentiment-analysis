@@ -29,6 +29,7 @@ VALID_LABELS = {"positive", "neutral", "negative"}
 
 class CorrectionRequest(BaseModel):
     manual_label: str
+    session_id: str = ""  # batchId from frontend — identifies the upload session
 
     @field_validator("manual_label")
     @classmethod
@@ -78,6 +79,8 @@ def correct_review(review_id: str, body: CorrectionRequest):
         "label": original_label,
         "manual_label": body.manual_label,
         "date": datetime.now(timezone.utc).isoformat(),
+        "correction_source_session_id": body.session_id,
+        "confidence_margin": review.get("confidence_margin", "0"),
     }
     tables.corrections.put_item(Item=correction)
 
@@ -142,7 +145,7 @@ def get_admin_corrections(format: str | None = None):
         output = StringIO()
         writer = csv.writer(output)
         # Must match export_corrections.py and retrain_with_corrections.py exactly
-        writer.writerow(["text", "label", "manual_label", "date", "review_id", "batch_id"])
+        writer.writerow(["text", "label", "manual_label", "date", "review_id", "batch_id", "correction_source_session_id", "confidence_margin"])
         for item in items:
             writer.writerow([
                 item.get("text", ""),
@@ -150,7 +153,9 @@ def get_admin_corrections(format: str | None = None):
                 item.get("manual_label", ""),
                 item.get("date", ""),
                 item.get("review_id", ""),
-                item.get("batch_id", "")
+                item.get("batch_id", ""),
+                item.get("correction_source_session_id", ""),
+                item.get("confidence_margin", ""),
             ])
         
         output.seek(0)
@@ -167,4 +172,18 @@ def get_admin_corrections(format: str | None = None):
         "total": len(items),
         "batch_count": batch_count
     })
+
+
+class AdminAuthRequest(BaseModel):
+    password: str
+
+
+@router.post("/admin/auth", response_model=ApiResponse)
+def admin_auth(body: AdminAuthRequest):
+    """
+    Validate admin password for the corrections panel.
+    """
+    if body.password == "sentrixadmin":
+        return ApiResponse(success=True, data={"authenticated": True})
+    return ApiResponse(success=False, error_code="UNAUTHORIZED", message="Incorrect password")
 

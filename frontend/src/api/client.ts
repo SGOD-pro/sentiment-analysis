@@ -80,11 +80,11 @@ export function getReview(reviewId: string, batchId: string) {
   return request<Review>(`/api/reviews/${reviewId}?${params}`);
 }
 
-export function correctReview(reviewId: string, manualLabel: string) {
+export function correctReview(reviewId: string, manualLabel: string, sessionId: string) {
   return request<Correction>(`/api/reviews/${reviewId}/correct`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ manual_label: manualLabel }),
+    body: JSON.stringify({ manual_label: manualLabel, session_id: sessionId }),
   });
 }
 

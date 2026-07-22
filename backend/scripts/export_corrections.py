@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-COLUMNS = ["text", "label", "manual_label", "date", "review_id", "batch_id"]
+COLUMNS = ["text", "label", "manual_label", "date", "review_id", "batch_id", "correction_source_session_id", "confidence_margin"]
 
 
 def scan_corrections(table_name: str, endpoint_url: str | None) -> list[dict]:

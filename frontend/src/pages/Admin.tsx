@@ -320,12 +320,23 @@ export default function Admin() {
   const [error, setError] = useState(false);
 
   // Simple static auth for v1
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (password === "sentrixadmin") {
-      setAuth(true);
-      setError(false);
-    } else {
+    try {
+      const res = await fetch(`${BASE}/api/admin/auth`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      const data = await res.json();
+      if (data.success && data.data?.authenticated) {
+        setAuth(true);
+        setError(false);
+      } else {
+        setError(true);
+        setPassword("");
+      }
+    } catch (err) {
       setError(true);
       setPassword("");
     }
