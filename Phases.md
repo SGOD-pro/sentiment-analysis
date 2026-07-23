@@ -330,3 +330,133 @@ Output (retraining pipeline)
 
 Run export_corrections.py → retrain_with_corrections.py → if metrics improve,
 lambda/artifacts/mlp_weights.npz is replaced → CI/CD deploys updated model automatically.
+
+---
+
+## Phase 13
+
+Title
+
+Post-Launch Quality Improvements (Ranked by Value/Complexity)
+
+Status
+
+Pending
+
+Goal
+
+Close the documented, known gaps in the current system rather than adding
+new surface area. Every item here addresses a weakness already identified
+and written down in PROJECT.md's "Known Limitations" section — this phase
+does not introduce new scope, it resolves existing scope.
+
+Explicitly NOT in this phase: BERTopic, semantic search, knowledge graph,
+recommendation engine. These are v3 items that would add visible surface
+area without touching any of the four real weaknesses below. Do not pull
+them forward into this phase regardless of how appealing they look —
+a documented weakness fixed is worth more than a new feature added, both
+technically and as an interview answer.
+
+### 13.1 — Per-Category Issue Clustering (highest value, lowest complexity)
+
+Problem: cross-category KMeans clustering mixes product-domain signal
+with complaint-type signal (music reviews cluster together because
+they're about music, not because they share a complaint type). See
+PROJECT.md's "Issue Detection: Cross-Category Signal Contamination".
+
+Tasks:
+- Cluster negative reviews within each product category separately, for
+  categories with 500+ negative reviews (volume gate — smaller categories
+  don't have enough data to cluster meaningfully on their own)
+- Cross-category clustering (existing, live) becomes the fallback for
+  categories below the volume gate and for reviews with no category
+  mapped at upload
+- `cluster_source` field (already in Reviews table schema) gets populated:
+  `per_category` or `cross_category_fallback` — this field exists today
+  but nothing writes a real value to it yet
+- Re-run cluster naming exercise for each category above the volume gate
+  (manual step, budget real time — this is the part that doesn't scale
+  to "just run a script")
+- Update issue distribution endpoint/dashboard to show cluster_source
+  so a user can see which issue tags are category-specific vs fallback
+
+Deliverable: issue tags that reflect actual complaint types per category,
+not contaminated by product-domain vocabulary.
+
+### 13.2 — Confidence-Score Dashboard Signal (medium value, medium complexity)
+
+Problem: `confidence_margin` and per-class probabilities are already
+stored on every review, but never surfaced to the user. This is real
+data sitting unused.
+
+Tasks:
+- Add "average confidence" metric per category on the Dashboard
+  (aggregate confidence_margin across reviews in that category/period)
+- Flag categories with low average confidence as "predictions less
+  reliable here" — simple threshold-based badge, not new ML work
+- Consider surfacing this in the Review Feed too: a visual indicator
+  (already partially planned in UI_UX.md's "low-confidence flag") for
+  individual reviews below a threshold
+
+Deliverable: business owners can see where the model is less certain,
+not just what it predicted — turns existing stored data into decision-
+relevant signal with zero new model training.
+
+### 13.3 — Compositional ("mixed_but_neutral") Sentiment (real value, harder)
+
+Problem: 20.8% of the model's confident-mistake cases (from the original
+audit taxonomy) are reviews with genuine compositional sentiment — "loved
+it until X broke" — that no tested intervention fixed. Upweighting,
+threshold adjustment, and retraining all failed to move this specific
+bucket. This is the one genuinely unsolved ML problem in the project,
+not a missing feature.
+
+Tasks (research-flavored, not a guaranteed win):
+- Revisit the ordinal regression reframing hypothesis (predicting the
+  underlying star rating as a continuous/ordinal target rather than
+  hard 3-class classification) — this was proposed but never properly
+  tested with a clean, isolated experiment
+- If pursued: needs its own frozen eval comparison against the current
+  MLP baseline (neg_recall 0.7915, frozen_recall 0.2967) using the exact
+  same v4 split and frozen slice, not a new evaluation methodology
+- Document the outcome either way — a properly-run experiment that
+  confirms ordinal regression doesn't help is still a real, useful,
+  defensible result (see PROJECT.md's existing pattern of documenting
+  negative results, e.g. the DistilBERT and finetuned-BGE experiments)
+
+Deliverable: either a measurable improvement to neutral recall past
+~0.75, or a rigorously documented negative result explaining why the
+ceiling holds — both are legitimate outcomes for this phase.
+
+### 13.4 — Category-Specific Model Variants (v2 scope, harder, real production ML)
+
+Problem: per-category F1 varies meaningfully (Software: 0.707,
+Pet_Supplies: 0.709 vs. better-performing categories) — a single
+universal model may be underperforming on specific categories that
+would benefit from specialized handling.
+
+Tasks:
+- Identify categories with F1 significantly below the overall average
+  using existing per-category evaluation data
+- Design a lightweight specialization approach (e.g. a small per-category
+  bias/calibration layer on top of the shared MLP, not a fully separate
+  model per category — avoid the deployment/maintenance cost of N
+  separate models)
+- Leverage existing CI/CD infrastructure (already supports conditional
+  model swaps via the Phase 12 retraining pipeline) to support deploying
+  category-aware variants without new architectural work
+
+Deliverable: measurable F1 improvement on the specific underperforming
+categories, without regressing the categories that already perform well.
+Explicitly v2/stretch — do not start this before 13.1-13.3 are resolved.
+
+---
+
+## Prioritization Note
+
+Sequence: 13.1 → 13.2 → 13.3 → 13.4, in that order, unless a specific
+business need reorders it. 13.1 and 13.2 are the highest-value,
+lowest-risk items and should ship first. 13.3 is a real research
+question with no guaranteed outcome — timebox it rather than letting it
+block 13.4. 13.4 should not start until the earlier three are either
+shipped or explicitly deprioritized with a written reason in this file.

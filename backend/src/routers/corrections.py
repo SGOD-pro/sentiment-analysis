@@ -61,16 +61,26 @@ def correct_review(review_id: str, body: CorrectionRequest):
     if body.manual_label == original_label:
         return ApiResponse(success=False, error_code="NO_OP", message="manual_label matches current label — nothing to correct")
 
-    # Check if a correction already exists (upsert: overwrite it)
+    # Check if a correction already exists for this review AND session (upsert per session)
     existing = tables.corrections.query(
         IndexName="review-corrections-index",
         KeyConditionExpression=Key("review_id").eq(review_id),
-        Limit=1,
     )
     existing_items = existing.get("Items", [])
 
-    correction_id = existing_items[0]["correction_id"] if existing_items else str(uuid.uuid4())
+    matching_item = None
+    if body.session_id:
+        for item in existing_items:
+            if item.get("correction_source_session_id") == body.session_id:
+                matching_item = item
+                break
+    elif existing_items:
+        matching_item = existing_items[0]
 
+    correction_id = matching_item["correction_id"] if matching_item else str(uuid.uuid4())
+
+    # Note: confidence_margin is taken from the original review object (Reviews table)
+    # and is NEVER overwritten or modified by human corrections.
     correction = {
         "correction_id": correction_id,
         "review_id": review_id,

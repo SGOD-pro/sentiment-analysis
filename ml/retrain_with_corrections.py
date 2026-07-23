@@ -154,6 +154,8 @@ def evaluate(model: MLP, X: np.ndarray, y: np.ndarray, device: str, label: str) 
 
 
 def main() -> None:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser()
     parser.add_argument("--corrections", required=True, help="CSV from export_corrections.py")
     parser.add_argument("--artifacts", default="lambda/artifacts", help="Lambda artifacts directory")
@@ -217,21 +219,42 @@ def main() -> None:
     le = LabelEncoder().fit(LABEL_NAMES)
 
     # ── Step 3: Confidence-based trust weight + volume gate ────────────
-    # For existing v4 texts: single correction is sufficient (model got
-    # a verified sample wrong), but apply confidence weighting.
-    # For new texts: require min_volume independent sessions.
+    # ── Step 3: Confidence-based trust weight + volume gate ────────────
+    # NOTE: "Sentiment shown to user" (UI display) vs "Sentiment trusted for retraining"
+    # are separate states. A single correction updates UI/Reviews immediately, but ALL
+    # corrections (both existing v4 texts and new texts) require min_volume (default 2)
+    # independent sessions before being trusted as ground truth for retraining.
     existing_ids = set(df["id"].values)
     new_texts, new_labels = [], []
-    applied_existing, skipped_high_conf, skipped_volume = 0, 0, 0
+    applied_existing, skipped_high_conf, skipped_volume, skipped_ties = 0, 0, 0, 0
 
-    # Group corrections by review_id to check volume
+    # Group corrections by review_id to check volume and agreement
     review_groups = corrections.groupby("review_id")
 
     for review_id, group in review_groups:
-        manual_label = group["manual_label"].mode().iloc[0]  # majority vote
+        # Check volume requirement across independent sessions
+        if "correction_source_session_id" in group.columns:
+            unique_sessions = group["correction_source_session_id"].nunique()
+        else:
+            unique_sessions = len(group)
+
+        if unique_sessions < args.min_volume:
+            skipped_volume += 1
+            sample_text = group["text"].iloc[0] if "text" in group.columns else review_id
+            print(f"  ℹ️ Review '{review_id}' ({unique_sessions} session < min_volume {args.min_volume}) → deferred for retraining")
+            continue
+
+        # Check for tie in majority vote across sessions
+        counts = group["manual_label"].value_counts()
+        if len(counts) >= 2 and counts.iloc[0] == counts.iloc[1]:
+            skipped_ties += 1
+            sample_text = group["text"].iloc[0] if "text" in group.columns else review_id
+            print(f"  ⚠️ TIE DETECTED for review '{review_id}' ('{sample_text[:40]}...'): equal votes {dict(counts)} across {unique_sessions} session(s) — EXCLUDED from retrain for manual review")
+            continue
+
+        manual_label = counts.index[0]  # Clear majority winner
 
         if review_id in existing_ids:
-            # Existing v4 text — single correction is meaningful
             match_idx = df.index[df["id"] == review_id].tolist()
             if not match_idx:
                 continue
@@ -245,26 +268,12 @@ def main() -> None:
                     margin = 0.0
 
             if margin > 0.70:
-                # ponytail: high-conf disagreement gets weight=0.5 treatment.
-                # For now, we flag but still include — the quality gates are
-                # the hard stop. A future iteration could use sample_weight in
-                # the DataLoader to actually scale the loss.
                 skipped_high_conf += 1
                 print(f"  ⚡ High-confidence override ({margin:.2f}) on {review_id} → flagged")
 
             df.loc[match_idx[0], "label"] = manual_label
             applied_existing += 1
         else:
-            # New text — require N independent sessions
-            if "correction_source_session_id" in group.columns:
-                unique_sessions = group["correction_source_session_id"].nunique()
-            else:
-                unique_sessions = len(group)
-
-            if unique_sessions < args.min_volume:
-                skipped_volume += 1
-                continue
-
             new_texts.append(group["text"].iloc[0])
             new_labels.append(manual_label)
 
@@ -272,7 +281,8 @@ def main() -> None:
     print(f"  Existing texts updated:    {applied_existing}")
     print(f"  High-conf flagged:         {skipped_high_conf}")
     print(f"  New texts accepted:        {len(new_texts)}")
-    print(f"  New texts skipped (volume): {skipped_volume}")
+    print(f"  Skipped due to volume:    {skipped_volume}")
+    print(f"  Skipped due to label tie:  {skipped_ties}")
 
     if new_texts:
         new_X = embed_texts(new_texts, artifacts_dir)

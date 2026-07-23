@@ -1,0 +1,2 @@
+text,label,manual_label,date,review_id,batch_id,correction_source_session_id,confidence_margin
+Sample text review 0,negative,positive,2026-07-23T00:00:00Z,v4_0,batch_1,sess_single_1,0.25

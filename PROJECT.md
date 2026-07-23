@@ -319,7 +319,12 @@ be assumed without validation.
 - [x] Lambda handler (sentiment + issue, single embedding pass)
 - [x] ONNX export and INT8 quantization
 - [x] End-to-end local test passing
-- [ ] AWS Lambda deployment
-- [ ] API Gateway setup
-- [ ] Dashboard (React frontend)
-- [ ] Per-category clustering (volume-gated)
+- [x] AWS Lambda deployment (two-function split: BackendFunction + MLInferenceFunction)
+- [x] API Gateway setup (CORS via FrontendOrigin parameter, two-pass config)
+- [x] Dashboard (React frontend, deployed on Vercel)
+- [x] Human feedback loop (Phase 12 — corrections captured, retraining pipeline
+      with dual quality gates, verification of trust layers still pending)
+- [ ] Per-category clustering (volume-gated) — Phase 13.1
+- [ ] Confidence-score dashboard signal — Phase 13.2
+- [ ] Compositional sentiment research (ordinal regression reframing) — Phase 13.3
+- [ ] Category-specific model variants — Phase 13.4 (v2 scope)
