@@ -11,7 +11,9 @@ work around it.
 
 ## Current Phase
 
-Phase 13 — Post-Launch Quality Improvements (Pending, not started)
+Phase 13.2 — Confidence-Score Dashboard Signal (Next)
+
+Phase 13.1 (Per-Category Issue Clustering) is COMPLETE. We have added `per_category_clustering.py` to calculate local centroids, updated `export_mlp_and_clusters.py` to output a unified `issue_centroids.npz`, and updated the Lambda inference, backend processing, DynamoDB schemas (using `ISSUE#{tag}#{source}#{week}` format), and frontend Issue Distribution chart (now a PieChart showing `cluster_source` tooltips).
 
 Phases 1-12 are complete or in-progress-but-functional. The core
 platform (sentiment + issue detection + dashboard + corrections

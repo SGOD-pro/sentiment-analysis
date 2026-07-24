@@ -108,7 +108,8 @@ def process_batch(batch_id: str) -> None:
 
     def _invoke_chunk(chunk: list[dict]) -> list[dict]:
         texts = [text_preprocessing(row[text_col]) or row[text_col] for row in chunk]
-        return invoke_lambda(texts)
+        categories = [row.get(category_col, "") if category_col else "" for row in chunk]
+        return invoke_lambda(texts, categories)
 
     with ThreadPoolExecutor(max_workers=min(len(chunks), 6)) as pool:
         futures = {pool.submit(_invoke_chunk, chunk): chunk for chunk in chunks}
@@ -188,7 +189,10 @@ def process_batch(batch_id: str) -> None:
             _accum_aggregate(agg_accum, f"TREND#{category}#{week}", sentiment)
             _accum_aggregate(agg_accum, f"CAT#{category}", sentiment)
             if result.get("issue_tag"):
-                _accum_aggregate(agg_accum, f"ISSUE#{result['issue_tag']}#{week}", "count")
+                source = result.get("cluster_source", "cross_category_fallback")
+                # Updated format: ISSUE#{tag}#{source}#{week}
+                # Handles backwards compatibility natively when querying via split()
+                _accum_aggregate(agg_accum, f"ISSUE#{result['issue_tag']}#{source}#{week}", "count")
 
             processed += 1
 

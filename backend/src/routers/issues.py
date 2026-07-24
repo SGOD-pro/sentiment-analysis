@@ -50,11 +50,16 @@ def issues_distribution(
     issue_counts = {}
     for item in items:
         agg_type = item["agg_type"]
-        parts = agg_type.split("#")  # ISSUE#tag#week
-        if len(parts) != 3:
+        parts = agg_type.split("#")  # ISSUE#tag#week or ISSUE#tag#source#week
+        
+        # ponytail: Handle old 3-segment keys (legacy) and new 4-segment keys natively.
+        if len(parts) == 4:
+            tag, source, week = parts[1], parts[2], parts[3]
+        elif len(parts) == 3:
+            tag, week = parts[1], parts[2]
+            source = "cross_category_fallback"
+        else:
             continue
-
-        tag, week = parts[1], parts[2]
 
         if week_from and week < week_from:
             continue
@@ -62,13 +67,22 @@ def issues_distribution(
             continue
 
         count = int(item.get("count", 0))
-        issue_counts[tag] = issue_counts.get(tag, 0) + count
+        
+        # Group by tag and source. If a tag has both (e.g. from a migration period),
+        # keep them separate or merge? The frontend wants unique tags, but technically
+        # "sizing_and_fit" (fallback) and "sizing_and_fit" (per_category) could be different.
+        # We will keep them distinct by key.
+        key = f"{tag}#{source}"
+        if key not in issue_counts:
+            issue_counts[key] = {"issue_tag": tag, "cluster_source": source, "count": 0}
+            
+        issue_counts[key]["count"] += count
 
     # ponytail: category filtering for issues requires scanning Reviews GSI
     # For v1, skip category filter on issues (Aggregates don't store per-category issue data)
-    # Upgrade: add ISSUE#tag#category#week aggregate keys
+    # Upgrade: add ISSUE#tag#source#category#week aggregate keys
 
-    issues = [{"issue_tag": tag, "count": count} for tag, count in issue_counts.items()]
+    issues = list(issue_counts.values())
     issues.sort(key=lambda i: i["count"], reverse=True)
 
     return ApiResponse(success=True, data={"issues": issues})

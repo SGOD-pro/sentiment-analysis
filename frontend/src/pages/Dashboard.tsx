@@ -6,7 +6,7 @@
  */
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import { AreaChart, Area, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -383,15 +383,37 @@ export default function Dashboard() {
               </div>
             ) : (
               <ResponsiveContainer width="100%" height={280}>
-                <BarChart data={issues.slice(0, 8)} layout="vertical" margin={{ left: 0, right: 8 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="oklch(var(--border))" horizontal={false} />
-                  <XAxis type="number" tick={{ fill: "oklch(var(--muted-foreground))", fontSize: 10 }} />
-                  <YAxis type="category" dataKey="issue_tag" tick={{ fill: "oklch(var(--muted-foreground))", fontSize: 10 }} width={110}
-                    tickFormatter={(v: string) => v.replaceAll("_", " ")} />
-                  <Tooltip contentStyle={{ backgroundColor: "oklch(var(--muted))", border: "1px solid oklch(var(--border))", borderRadius: 8, padding: "12px" }}
-                    formatter={(v) => [v, "Count"]} />
-                  <Bar dataKey="count" fill="#CF202F" radius={[0, 3, 3, 0]} />
-                </BarChart>
+                <PieChart margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
+                  <Pie
+                    data={issues.slice(0, 8)}
+                    dataKey="count"
+                    nameKey="issue_tag"
+                    cx="50%"
+                    cy="50%"
+                    outerRadius={90}
+                    label={({ name, percent }) => `${name.replaceAll("_", " ")} (${(percent * 100).toFixed(0)}%)`}
+                    labelLine={true}
+                  >
+                    {issues.slice(0, 8).map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={['#CF202F', '#E55353', '#F98B8B', '#FCA5A5', '#FECACA', '#FEE2E2', '#F3F4F6', '#E5E7EB'][index % 8]} />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    content={({ active, payload }) => {
+                      if (active && payload && payload.length) {
+                        const data = payload[0].payload;
+                        return (
+                          <div className="bg-background border border-border p-3 rounded-lg shadow-sm text-xs">
+                            <p className="font-bold mb-1">{data.issue_tag.replaceAll("_", " ")}</p>
+                            <p>Count: {data.count}</p>
+                            <p>Source: {data.cluster_source === 'per_category' ? 'Category Specific' : 'Global Fallback'}</p>
+                          </div>
+                        );
+                      }
+                      return null;
+                    }}
+                  />
+                </PieChart>
               </ResponsiveContainer>
             )}
           </CardContent>

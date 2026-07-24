@@ -85,7 +85,17 @@ onnx_session = ort.InferenceSession(
 
 
 mlp_weights = np.load(f"{ARTIFACT_DIR}/mlp_weights.npz")
-issue_centroids = np.load(f"{ARTIFACT_DIR}/issue_centroids.npy")  # shape (K, 384)
+
+centroid_path_npz = f"{ARTIFACT_DIR}/issue_centroids.npz"
+centroid_path_npy = f"{ARTIFACT_DIR}/issue_centroids.npy"
+
+if os.path.exists(centroid_path_npz):
+    npz_data = np.load(centroid_path_npz)
+    issue_centroids = {k: npz_data[k] for k in npz_data.files}
+elif os.path.exists(centroid_path_npy):
+    issue_centroids = {"cross_category_fallback": np.load(centroid_path_npy)}
+else:
+    issue_centroids = {}
 
 
 def embed_texts(texts: list[str]) -> np.ndarray:
@@ -170,32 +180,54 @@ def apply_asymmetric_threshold(probs: np.ndarray):
     return final_preds, margins
 
 
-def assign_issue_cluster(embedding: np.ndarray):
+def assign_issue_cluster(embedding: np.ndarray, category: str):
     """
     Nearest-centroid lookup. Only meaningful for negative-sentiment reviews
     (that's what the clusters were built from) - caller is responsible for
     only invoking this when sentiment == negative.
     """
     cfg = CONFIG["issue_detection"]
-    distances = np.linalg.norm(issue_centroids - embedding, axis=1)
+    
+    # Backward compatibility with old config structure
+    has_new_config = "per_category_clusters" in cfg
+    
+    if has_new_config and category in cfg["per_category_clusters"] and category in issue_centroids:
+        centroids = issue_centroids[category]
+        cluster_source = "per_category"
+        cluster_names = cfg["per_category_clusters"][category]["cluster_names"]
+        distance_threshold = cfg["per_category_clusters"][category].get("distance_threshold", cfg.get("distance_threshold"))
+    else:
+        centroids = issue_centroids.get("cross_category_fallback", list(issue_centroids.values())[0] if issue_centroids else np.empty((0, 384)))
+        cluster_source = "cross_category_fallback"
+        if has_new_config:
+            cluster_names = cfg["fallback_clusters"]["cluster_names"]
+            distance_threshold = cfg["fallback_clusters"].get("distance_threshold", cfg.get("distance_threshold"))
+        else:
+            cluster_names = cfg.get("cluster_names", {})
+            distance_threshold = cfg.get("distance_threshold")
+            
+    if centroids.shape[0] == 0:
+        return cfg.get("fallback_label", "other"), 0.0, cluster_source
+
+    distances = np.linalg.norm(centroids - embedding, axis=1)
     nearest_idx = int(distances.argmin())
     nearest_distance = float(distances[nearest_idx])
 
-    threshold = cfg["distance_threshold"]
-    if threshold is not None and nearest_distance > threshold:
-        return cfg["fallback_label"], nearest_distance
+    if distance_threshold is not None and nearest_distance > distance_threshold:
+        return cfg.get("fallback_label", "other"), nearest_distance, cluster_source
 
-    cluster_name = cfg["cluster_names"].get(str(nearest_idx), cfg["fallback_label"])
-    return cluster_name, nearest_distance
+    cluster_name = cluster_names.get(str(nearest_idx), cfg.get("fallback_label", "other"))
+    return cluster_name, nearest_distance, cluster_source
 
 
 def lambda_handler(event, context):
     """
-    Expects: {"texts": ["review 1", "review 2", ...]}
+    Expects: {"texts": ["review 1", "review 2", ...], "categories": ["cat 1", "cat 2", ...]}
     Preprocessing (text_preprocessing.py) must run BEFORE texts reach here.
     """
     t_handler_start = time.perf_counter()
     texts = event.get("texts", [])
+    categories = event.get("categories", [])
     if not texts:
         return {"statusCode": 400, "body": json.dumps({"error": "no texts provided"})}
 
@@ -212,15 +244,17 @@ def lambda_handler(event, context):
     num_negative_reviews = 0
     for i, text in enumerate(texts):
         sentiment_label = label_names[sentiment_preds[i]]
+        category = categories[i] if i < len(categories) else ""
 
         # issue detection ONLY runs for negative sentiment - this is a
         # deliberate product decision (positive/neutral reviews don't
         # have "issues" to categorize), not an oversight
         issue_tag = None
         issue_distance = None
+        cluster_source = None
         if sentiment_preds[i] == negative_id:
             num_negative_reviews += 1
-            issue_tag, issue_distance = assign_issue_cluster(embeddings[i])
+            issue_tag, issue_distance, cluster_source = assign_issue_cluster(embeddings[i], category)
 
         results.append({
             "text": text,
@@ -231,6 +265,7 @@ def lambda_handler(event, context):
             },
             "issue_tag": issue_tag,
             "issue_distance": issue_distance,
+            "cluster_source": cluster_source,
         })
     t_issue_end = time.perf_counter()
     duration_issue_detection_ms = (t_issue_end - t_issue_start) * 1000

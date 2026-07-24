@@ -1,7 +1,7 @@
 """
 Final export step. Run once, locally/Colab, produces everything Lambda needs:
   1. MLP weights as plain numpy (no PyTorch in Lambda)
-  2. KMeans cluster centroids as plain numpy (no sklearn in Lambda)
+  2. KMeans cluster centroids as plain numpy (no sklearn in Lambda) - combined in .npz
   3. Cluster name mapping (from your manually-named worksheet)
   4. Unified config tying sentiment + issue detection together
 
@@ -15,6 +15,7 @@ import pandas as pd
 import json
 import joblib
 from pathlib import Path
+import glob
 
 ROOT = Path("/content/drive/MyDrive/Dataset/embeddings_output")
 EXPORT_DIR = Path("./lambda_deploy_artifacts")
@@ -51,40 +52,24 @@ print("net.3.weight, net.6.weight, etc) - if your architecture differs, the")
 print("forward pass in the handler needs matching updates.")
 
 # ---------------------------------------------------------------------------
-# STEP 2: KMeans centroids -> numpy (issue detection doesn't need sklearn
-# at inference - nearest-centroid is just a distance calculation)
+# STEP 2: KMeans centroids -> numpy (combined into .npz)
 # ---------------------------------------------------------------------------
-kmeans = joblib.load(ROOT / "issue_kmeans_model.joblib")
-print(f"Loaded KMeans from issue_kmeans_model.joblib")
+centroids_dict = {}
+config_issue_detection = {
+    "only_runs_on_sentiment": "negative",
+    "fallback_label": "other",
+    "per_category_clusters": {}
+}
 
-centroids = kmeans.cluster_centers_  # shape (K, 384)
-np.save(EXPORT_DIR / "issue_centroids.npy", centroids)
-print(f"\nKMeans centroids exported: shape {centroids.shape}")
-
-# ---------------------------------------------------------------------------
-# STEP 3: cluster name mapping - load YOUR filled-in worksheet
-# ---------------------------------------------------------------------------
-naming_worksheet = pd.read_csv(ROOT / "cluster_naming_worksheet.csv")
-assert naming_worksheet["suggested_name"].notna().all() and \
-       (naming_worksheet["suggested_name"] != "").all(), (
-    "cluster_naming_worksheet.csv has empty suggested_name values - "
-    "fill in every cluster's name before exporting for production."
-)
-
-cluster_names = dict(zip(
-    naming_worksheet["cluster_id"].astype(int),
-    naming_worksheet["suggested_name"]
-))
-print(f"\nCluster names loaded: {cluster_names}")
+# 2.1 Load fallback KMeans
+kmeans_fallback = joblib.load(ROOT / "issue_kmeans_model.joblib")
+print(f"Loaded fallback KMeans from issue_kmeans_model.joblib")
+centroids_dict["cross_category_fallback"] = kmeans_fallback.cluster_centers_
 
 # distance threshold: if a review's nearest centroid is farther than this,
 # tag it "other" instead of forcing a weak match - prevents low-confidence
 # cluster assignments from polluting your issue tags with noise
 DISTANCE_THRESHOLD = 0.70  # calibrated from distance-to-own-centroid distribution
-                            # on 68,967 negative reviews: mean=0.607, 90th=0.684,
-                            # 95th=0.710. At 0.70 roughly 5% of reviews fall back
-                            # to "other" - far enough from every centroid that
-                            # forcing a nearest-neighbor label would be misleading.
 
 assert DISTANCE_THRESHOLD is not None, (
     "DISTANCE_THRESHOLD is still None. Run this script once to see the "
@@ -94,8 +79,61 @@ assert DISTANCE_THRESHOLD is not None, (
     "into a cluster even when it doesn't belong to any of them."
 )
 
+# 2.2 Load fallback cluster names
+naming_worksheet = pd.read_csv(ROOT / "cluster_naming_worksheet.csv")
+assert naming_worksheet["suggested_name"].notna().all() and \
+       (naming_worksheet["suggested_name"] != "").all(), (
+    "cluster_naming_worksheet.csv has empty suggested_name values - "
+    "fill in every cluster's name before exporting for production."
+)
+
+cluster_names_fallback = dict(zip(
+    naming_worksheet["cluster_id"].astype(int),
+    naming_worksheet["suggested_name"]
+))
+
+config_issue_detection["fallback_clusters"] = {
+    "cluster_names": {str(k): v for k, v in cluster_names_fallback.items()},
+    "distance_threshold": DISTANCE_THRESHOLD
+}
+
+# 2.3 Load per-category KMeans models and cluster names
+per_cat_worksheet_path = ROOT / "per_category_naming_worksheet.csv"
+if per_cat_worksheet_path.exists():
+    per_cat_worksheet = pd.read_csv(per_cat_worksheet_path)
+    assert per_cat_worksheet["suggested_name"].notna().all() and \
+           (per_cat_worksheet["suggested_name"] != "").all(), (
+        "per_category_naming_worksheet.csv has empty suggested_name values."
+    )
+    
+    categories = per_cat_worksheet["category"].unique()
+    for cat in categories:
+        model_path = ROOT / f"issue_kmeans_model_{cat.replace(' ', '_')}.joblib"
+        if model_path.exists():
+            km = joblib.load(model_path)
+            centroids_dict[cat] = km.cluster_centers_
+            
+            cat_rows = per_cat_worksheet[per_cat_worksheet["category"] == cat]
+            cat_names = dict(zip(
+                cat_rows["cluster_id"].astype(int),
+                cat_rows["suggested_name"]
+            ))
+            
+            config_issue_detection["per_category_clusters"][cat] = {
+                "cluster_names": {str(k): v for k, v in cat_names.items()},
+                "distance_threshold": DISTANCE_THRESHOLD  # Can be customized per category if needed
+            }
+            print(f"Loaded per-category model and names for: {cat}")
+else:
+    print(f"No {per_cat_worksheet_path} found. Skipping per-category clusters.")
+
+# 2.4 Save all centroids to NPZ
+np.savez(EXPORT_DIR / "issue_centroids.npz", **centroids_dict)
+print(f"\nKMeans centroids exported to issue_centroids.npz with keys: {list(centroids_dict.keys())}")
+
+
 # ---------------------------------------------------------------------------
-# STEP 4: unified config
+# STEP 3: unified config
 # ---------------------------------------------------------------------------
 config = {
     "sentiment": {
@@ -107,12 +145,7 @@ config = {
         "positive_class_id": 2,
         "mlp_architecture": {"input_dim": 384, "hidden1": 256, "hidden2": 128, "n_classes": 3},
     },
-    "issue_detection": {
-        "cluster_names": {str(k): v for k, v in cluster_names.items()},
-        "distance_threshold": DISTANCE_THRESHOLD,  # fill in after calibration
-        "only_runs_on_sentiment": "negative",  # issue tagging only applies to negative predictions
-        "fallback_label": "other",
-    },
+    "issue_detection": config_issue_detection,
 }
 with open(EXPORT_DIR / "config.json", "w") as f:
     json.dump(config, f, indent=2)
@@ -132,26 +165,30 @@ print("="*60)
 # Calibration helper - run separately, inspect the distribution, then go
 # back and set DISTANCE_THRESHOLD above before re-running this export
 # ---------------------------------------------------------------------------
-clustered = pd.read_csv(ROOT / "negative_reviews_clustered.csv")
-bge_embeddings = np.load(ROOT / "bge_clean_embeddings.npy")
-full_df = pd.read_parquet(ROOT / "bge_clean_metadata.parquet")
+try:
+    clustered = pd.read_csv(ROOT / "negative_reviews_clustered.csv")
+    bge_embeddings = np.load(ROOT / "bge_clean_embeddings.npy")
+    full_df = pd.read_parquet(ROOT / "bge_clean_metadata.parquet")
 
-clustered_ids = set(clustered["id"])
-mask = full_df["id"].isin(clustered_ids)
-clustered_embeddings = bge_embeddings[mask.values]
-clustered_full = full_df[mask].reset_index(drop=True)
-clustered_full = clustered_full.merge(clustered[["id", "cluster"]], on="id")
+    clustered_ids = set(clustered["id"])
+    mask = full_df["id"].isin(clustered_ids)
+    clustered_embeddings = bge_embeddings[mask.values]
+    clustered_full = full_df[mask].reset_index(drop=True)
+    clustered_full = clustered_full.merge(clustered[["id", "cluster"]], on="id")
 
-distances_to_own_centroid = []
-for i, row in clustered_full.iterrows():
-    c = int(row["cluster"])
-    dist = np.linalg.norm(clustered_embeddings[i] - centroids[c])
-    distances_to_own_centroid.append(dist)
+    distances_to_own_centroid = []
+    centroids = centroids_dict["cross_category_fallback"]
+    for i, row in clustered_full.iterrows():
+        c = int(row["cluster"])
+        dist = np.linalg.norm(clustered_embeddings[i] - centroids[c])
+        distances_to_own_centroid.append(dist)
 
-distances_to_own_centroid = np.array(distances_to_own_centroid)
-print(f"\nDistance-to-own-centroid distribution (all clustered reviews):")
-print(pd.Series(distances_to_own_centroid).describe())
-print("\nA sane DISTANCE_THRESHOLD is roughly the 90th-95th percentile of this -")
-print("reviews farther than that from EVERY centroid are genuinely novel/")
-print("off-topic and should be tagged 'other' rather than forced into the")
-print("nearest (but still distant) cluster.")
+    distances_to_own_centroid = np.array(distances_to_own_centroid)
+    print(f"\nDistance-to-own-centroid distribution (all clustered reviews):")
+    print(pd.Series(distances_to_own_centroid).describe())
+    print("\nA sane DISTANCE_THRESHOLD is roughly the 90th-95th percentile of this -")
+    print("reviews farther than that from EVERY centroid are genuinely novel/")
+    print("off-topic and should be tagged 'other' rather than forced into the")
+    print("nearest (but still distant) cluster.")
+except Exception as e:
+    print("Could not run calibration helper. Ensure negative_reviews_clustered.csv exists.")

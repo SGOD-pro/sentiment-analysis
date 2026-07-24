@@ -20,9 +20,9 @@ from logger import get_logger
 log = get_logger(__name__)
 
 
-def invoke_lambda(texts: list[str]) -> list[dict]:
+def invoke_lambda(texts: list[str], categories: list[str] = None) -> list[dict]:
     """
-    Call the inference Lambda with a batch of texts.
+    Call the inference Lambda with a batch of texts and corresponding categories.
 
     Returns parsed results list. Raises on Lambda error.
     """
@@ -30,6 +30,8 @@ def invoke_lambda(texts: list[str]) -> list[dict]:
     kwargs = {"region_name": settings.aws_region}
     if settings.aws_endpoint_url:
         kwargs["endpoint_url"] = settings.aws_endpoint_url
+
+    event = {"texts": texts, "categories": categories or []}
 
     if settings.aws_endpoint_url and "localhost" in settings.aws_endpoint_url:
         # Local bypass: Run the actual ML model directly instead of the LocalStack mock
@@ -43,12 +45,11 @@ def invoke_lambda(texts: list[str]) -> list[dict]:
             sys.path.append(lambda_path)
             
         import handler
-        event = {"texts": texts}
         response = handler.lambda_handler(event, None)
         response_payload = {"body": response["body"]}
     else:
         client = boto3.client("lambda", **kwargs)
-        payload = json.dumps({"texts": texts})
+        payload = json.dumps(event)
         response = client.invoke(
             FunctionName=settings.lambda_function_name,
             InvocationType="RequestResponse",

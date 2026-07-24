@@ -36,6 +36,7 @@ export interface CategorySummary {
 export interface IssueCount {
   issue_tag: string;
   count: number;
+  cluster_source?: string;
 }
 
 /** A review row — known fields + any extra CSV columns as string values. */
