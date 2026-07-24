@@ -150,10 +150,10 @@ Every API endpoint requires
 Every service function (lambda_client.py, batch_processor.py, etc.)
 requires a test for both branches when the function has environment-
 dependent behavior — e.g. lambda_client.invoke_lambda() must have a test
-covering the localhost/LocalStack bypass path AND a mocked test covering
+covering the localhost/floci bypass path AND a mocked test covering
 the real boto3.invoke() path, not just whichever one is easiest to test.
 
-Local dev and CI must run the SAME test suite against the SAME LocalStack
+Local dev and CI must run the SAME test suite against the SAME floci
 setup — see Deployment.md. A test that only passes in CI but not locally
 (or vice versa) indicates an environment-detection bug, not an acceptable
 inconsistency.

@@ -240,11 +240,16 @@ def _accum_aggregate(accum: dict, agg_type: str, metric: str) -> None:
     accum[agg_type][metric] = accum[agg_type].get(metric, 0) + 1
 
 
+from decimal import Decimal
+
 def _accum_aggregate_sum(accum: dict, agg_type: str, metric: str, val: float) -> None:
     """Accumulate a sum of values in-memory before flushing."""
     if agg_type not in accum:
         accum[agg_type] = {}
-    accum[agg_type][metric] = accum[agg_type].get(metric, 0.0) + val
+    
+    # Store as Decimal since boto3 DynamoDB requires Decimal for floats
+    current = accum[agg_type].get(metric, Decimal("0.0"))
+    accum[agg_type][metric] = current + Decimal(str(val))
 
 
 def _flush_aggregates(tables, batch_id: str, accum: dict) -> None:

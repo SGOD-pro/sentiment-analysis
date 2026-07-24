@@ -267,7 +267,7 @@ Tasks
 - Fix lambda_client.py local-bypass import path for new src/ folder depth
 - Right-size BackendFunction to 256MB (down from 512MB — no ML libraries loaded)
 - Add AWS::DynamoDB::Table resources to template.yaml (currently manual pre-step)
-- Switch test-backend CI job to LocalStack instead of real AWS secrets
+- Switch test-backend CI job to floci instead of real AWS secrets
 - Write backend/scripts/local_bootstrap.py (creates local S3 bucket + DynamoDB tables)
 - Full verification pass per Deployment.md checklist (7 steps)
 - Confirm MLInferenceFunction has zero API Gateway routes (unreachable externally)
@@ -277,7 +277,7 @@ Deliverables
 - backend/src/ restructured and working locally
 - lambda/handler.py as single source of truth for ML inference
 - template.yaml with right-sized memory per function + DynamoDB table resources
-- CI running tests against LocalStack, not real AWS
+- CI running tests against floci, not real AWS
 - Deployment.md verification checklist fully passed against real AWS
 
 Output

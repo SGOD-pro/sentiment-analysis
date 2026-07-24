@@ -17,6 +17,12 @@ Phase 13.2 (Confidence-Score Dashboard Signal) is COMPLETE. `confidence_margin` 
 
 Phase 13.1 (Per-Category Issue Clustering) is COMPLETE. We have added `per_category_clustering.py` to calculate local centroids, updated `export_mlp_and_clusters.py` to output a unified `issue_centroids.npz`, and updated the Lambda inference, backend processing, DynamoDB schemas (using `ISSUE#{tag}#{source}#{week}` format), and frontend Issue Distribution chart (now a PieChart showing `cluster_source` tooltips).
 
+Full Stressful Benchmark Test is COMPLETE. Tested on `mixed_categories_reviews.csv` (10,200 reviews across 34 categories):
+- Total Duration: 872.91s (~14.5 mins)
+- 204 Chunks (50 reviews/batch), 0% failure rate
+- Throughput: ~11.7 reviews/sec end-to-end (including S3 ingestion, parallel local ONNX Lambda inference, DynamoDB review writes, and aggregate calculations)
+- Fixed Boto3 DynamoDB float serialization issue by accumulating `confidence_margin_sum` as `decimal.Decimal`.
+
 Phases 1-12 are complete or in-progress-but-functional. The core
 platform (sentiment + issue detection + dashboard + corrections
 feedback loop) is deployed and working. Phase 13 addresses documented

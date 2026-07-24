@@ -26,7 +26,7 @@ has to guess again.
 | Environment | `AWS_ENDPOINT_URL` | ML inference happens via | Requires AWS credentials? |
 |---|---|---|---|
 | Local dev (default) | unset / `http://localhost:4566` | Direct Python import of `lambda/handler.py` | No |
-| CI (pytest) | `http://localhost:4566` (LocalStack) | Direct Python import of `lambda/handler.py` | No (LocalStack mock creds) |
+| CI (pytest) | `http://localhost:4566` (floci) | Direct Python import of `lambda/handler.py` | No (floci mock creds) |
 | Staging/Prod | unset (real AWS) | `boto3.client("lambda").invoke()` | Yes (IAM role) |
 
 **The branch condition in `lambda_client.py` is exactly this table, encoded
@@ -60,17 +60,17 @@ localhost branch fires — `lambda_client.py` never reads it in that path.
 Kept in `.env` only so the same `config.py` schema works in both
 environments without conditional required-fields logic.
 
-### 2. LocalStack for S3 + DynamoDB (not for Lambda-to-Lambda)
+### 2. floci for S3 + DynamoDB (not for Lambda-to-Lambda)
 
-LocalStack mocks S3 and DynamoDB locally so `database.py` and the upload
+floci mocks S3 and DynamoDB locally so `database.py` and the upload
 flow work without hitting real AWS. It does NOT need to mock Lambda — the
-ML inference bypass in `lambda_client.py` skips LocalStack's Lambda service
+ML inference bypass in `lambda_client.py` skips floci's Lambda service
 entirely and runs `lambda/handler.py` as a direct import instead. This is
-simpler and faster than trying to make LocalStack emulate a real Lambda
+simpler and faster than trying to make floci emulate a real Lambda
 Docker container for every code change during dev.
 
 ```bash
-docker run -d -p 4566:4566 -e SERVICES=s3,dynamodb localstack/localstack
+docker run -d -p 4566:4566 -e SERVICES=s3,dynamodb floci/floci
 ```
 
 Create local tables/bucket once (see `backend/scripts/local_bootstrap.py`,
@@ -91,7 +91,7 @@ function stays thin even locally.
 Upload a CSV through `/api/upload` — this exercises the full local-bypass
 path: `upload.py` → `batch_processor.py` → `lambda_client.invoke_lambda()`
 → direct import of `lambda/handler.py` → real ONNX/MLP inference running
-in-process, no AWS Lambda involved, results written to LocalStack DynamoDB.
+in-process, no AWS Lambda involved, results written to floci DynamoDB.
 
 **This means local dev runs the REAL model, not a mock.** The only thing
 mocked is the network boundary (no real Lambda invocation), not the ML
@@ -170,8 +170,8 @@ real-AWS deploys coexist in one workflow.
 ```
 detect-changes
       │
-      ├──► test-backend (runs against LocalStack, NOT real AWS)
-      │         - starts LocalStack service container in the runner
+      ├──► test-backend (runs against floci, NOT real AWS)
+      │         - starts floci service container in the runner
       │         - runs pytest suite, including a real call through
       │           lambda_client.py's localhost branch (imports
       │           lambda/handler.py directly, same as local dev)
@@ -188,7 +188,7 @@ detect-changes
       │
       ├──► deploy-backend (needs test-backend + test-ml both passing)
       │         - THIS is where real AWS credentials are used
-      │         - pulls ML artifacts from S3 (not LocalStack)
+      │         - pulls ML artifacts from S3 (not floci)
       │         - sam build + sam deploy — creates/updates BOTH
       │           Lambda functions in one CloudFormation stack
       │         - this is the ONLY job in the entire pipeline that
@@ -200,26 +200,26 @@ detect-changes
 ```
 
 **Key principle:** CI tests never deploy anything and never require real
-AWS Lambda to exist yet — they run entirely against LocalStack (S3,
+AWS Lambda to exist yet — they run entirely against floci (S3,
 DynamoDB) plus direct Python imports (ML handler), exactly mirroring what
 a developer's laptop does. Only the `deploy-*` jobs touch real AWS, and
 only after tests pass. This means a broken AWS deploy never blocks a
 developer from working locally, and a local-only bug is always caught
 before it reaches the deploy step.
 
-### Add LocalStack to `test-backend` job (gap to close)
+### Add floci to `test-backend` job (gap to close)
 
 Current `ci_cd_pipeline.yml`'s `test-backend` job runs against real AWS
 via secrets (see `env:` block in the existing workflow) — this should
-switch to LocalStack for the same reason local dev uses it: tests should
+switch to floci for the same reason local dev uses it: tests should
 not require real AWS credentials or touch real AWS resources just to
 verify the API works.
 
 ```yaml
 test-backend:
   services:
-    localstack:
-      image: localstack/localstack
+    floci:
+      image: floci/floci
       ports:
         - 4566:4566
       env:
@@ -244,9 +244,9 @@ and should be implemented in Phase 11.
 
 ## Verification Checklist (Run Before Calling v1 Deployed)
 
-1. `docker run` LocalStack, run backend locally, upload a CSV, confirm
+1. `docker run` floci, run backend locally, upload a CSV, confirm
    real sentiment predictions come back (proves local-bypass path works)
-2. Push a commit, confirm CI runs `test-backend` against LocalStack
+2. Push a commit, confirm CI runs `test-backend` against floci
    (not real AWS), confirm it passes without requiring deploy secrets
 3. Manually trigger `deploy-backend` via `workflow_dispatch`, confirm
    both Lambda functions appear in AWS Console after `sam deploy`
