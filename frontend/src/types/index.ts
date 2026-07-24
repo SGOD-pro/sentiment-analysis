@@ -31,6 +31,7 @@ export interface CategorySummary {
   negative: number;
   total: number;
   sentiment_score: number;
+  avg_confidence?: number;
 }
 
 export interface IssueCount {

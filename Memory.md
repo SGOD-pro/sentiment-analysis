@@ -11,7 +11,9 @@ work around it.
 
 ## Current Phase
 
-Phase 13.2 — Confidence-Score Dashboard Signal (Next)
+Phase 13.3 — Compositional Sentiment Research (Next)
+
+Phase 13.2 (Confidence-Score Dashboard Signal) is COMPLETE. `confidence_margin` is now aggregated in the backend, and both the Dashboard category table and individual Review cards surface low-confidence warnings using the threshold `LOW_CONFIDENCE_THRESHOLD = 0.15`.
 
 Phase 13.1 (Per-Category Issue Clustering) is COMPLETE. We have added `per_category_clustering.py` to calculate local centroids, updated `export_mlp_and_clusters.py` to output a unified `issue_centroids.npz`, and updated the Lambda inference, backend processing, DynamoDB schemas (using `ISSUE#{tag}#{source}#{week}` format), and frontend Issue Distribution chart (now a PieChart showing `cluster_source` tooltips).
 
@@ -33,12 +35,9 @@ known weaknesses, not new features.
 - 13 architecture experiments run and documented — MLP on frozen
   embeddings beat DistilBERT finetune and finetuned-BGE-encoder in all
   of them. Do not re-attempt these without new evidence.
-- Issue detection: KMeans K=15 on 68,967 negative reviews, distance
-  threshold 0.70. 13 clusters usably named, clusters 6 and 11 are noise
-  ("other"). Known limitation: cross-category signal contamination
-  (see Phase 13.1).
-- Deployment artifacts: quantized ONNX (~35MB) + mlp_weights.npz (~0.5MB)
-  + issue_centroids.npy (~22KB) + config.json — all in
+- Issue detection: KMeans per-category clustering implemented (Phase 13.1) for 34 categories, with distance threshold 0.70. Fallback cross-category clustering used for smaller categories. "other" noise assignment dropped from 6.5% to 4.0%.
+- Deployment artifacts: quantized ONNX (~35MB) + mlp_weights.npz (~516.5KB)
+  + issue_centroids.npz (~541.6KB) + config.json (~18.0KB) — all in
   lambda/artifacts/, synced from S3 at deploy time, NOT committed to git.
 
 ### Two-Lambda Architecture (Phase 11) — deployed and verified
@@ -133,14 +132,16 @@ Drive/MyDrive/Dataset/embeddings_output/
                                         every correction round
   final_mlp_state.pt               ← production MLP weights (PyTorch)
   issue_kmeans_model.joblib
+  issue_kmeans_model_<Category>.joblib (per-category models)
   cluster_naming_worksheet.csv
+  per_category_naming_worksheet.csv
 
 Drive/MyDrive/lambda_deploy_artifacts/  (also mirrored to S3)
   bge_onnx_quantized/               ← ships to Lambda
   bge_onnx_fp32/                    ← build intermediate, NEVER ships,
                                         always excluded via --exclude flag
   mlp_weights.npz
-  issue_centroids.npy
+  issue_centroids.npz
   config.json
 ```
 

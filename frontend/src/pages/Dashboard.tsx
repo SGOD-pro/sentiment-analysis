@@ -22,6 +22,8 @@ import { DashboardPage } from "@/components/dashboard-layout";
 import { DateRangeFilter, type DateRangeValue } from "@/components/DateRangeFilter";
 import { cn } from "@/lib/utils";
 
+const LOW_CONFIDENCE_THRESHOLD = 0.15;
+
 // ── Filter state shape ───────────────────────────────────────────────────────
 interface Filters {
   category: string;
@@ -342,6 +344,7 @@ export default function Dashboard() {
                     <th className="px-6 py-3 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{colMap.catCol ?? "Category"}</th>
                     <th className="px-6 py-3 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Sentiment</th>
                     <th className="px-6 py-3 text-right text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Volume</th>
+                    <th className="px-6 py-3 text-right text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Avg Conf</th>
                     <th className="px-6 py-3 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Status</th>
                   </tr>
                 </thead>
@@ -349,6 +352,9 @@ export default function Dashboard() {
                   {visibleCategories.map((c) => {
                     const score = c.sentiment_score * 100;
                     const isNeg = score < 0;
+                    const hasConf = c.avg_confidence !== undefined && c.avg_confidence > 0;
+                    const isLowConf = hasConf && c.avg_confidence! < LOW_CONFIDENCE_THRESHOLD;
+                    
                     return (
                       <tr key={c.category} className="border-b border-border hover:bg-accent/30 transition-colors">
                         <td className="px-6 py-3 font-semibold">{c.category}</td>
@@ -358,6 +364,16 @@ export default function Dashboard() {
                           </span>
                         </td>
                         <td className="px-6 py-3 text-right font-number text-muted-foreground">{c.total.toLocaleString()}</td>
+                        <td className="px-6 py-3 text-right">
+                          {hasConf ? (
+                            <span className={cn("font-number font-medium", isLowConf && "text-warning")}>
+                              {(c.avg_confidence! * 100).toFixed(0)}%
+                              {isLowConf && <AlertTriangle className="inline-block w-3 h-3 ml-1 -mt-0.5" />}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </td>
                         <td className="px-6 py-3">
                           <span className={`w-2 h-2 rounded-full inline-block ${isNeg ? "bg-destructive" : "bg-green-500"}`} />
                         </td>

@@ -61,9 +61,10 @@ def categories_summary(
             if week_to and week > week_to:
                 continue
             if cat not in categories:
-                categories[cat] = {"category": cat, "positive": 0, "neutral": 0, "negative": 0}
+                categories[cat] = {"category": cat, "positive": 0, "neutral": 0, "negative": 0, "confidence_margin_sum": 0.0}
             for sentiment in ("positive", "neutral", "negative"):
                 categories[cat][sentiment] += int(item.get(sentiment, 0))
+            categories[cat]["confidence_margin_sum"] += float(item.get("confidence_margin_sum", 0.0))
     else:
         # No date filter — fast path using CAT# keys
         resp = tables.aggregates.query(
@@ -75,9 +76,10 @@ def categories_summary(
         for item in items:
             cat = item["agg_type"].split("#", 1)[1]
             if cat not in categories:
-                categories[cat] = {"category": cat, "positive": 0, "neutral": 0, "negative": 0}
+                categories[cat] = {"category": cat, "positive": 0, "neutral": 0, "negative": 0, "confidence_margin_sum": 0.0}
             for sentiment in ("positive", "neutral", "negative"):
                 categories[cat][sentiment] += int(item.get(sentiment, 0))
+            categories[cat]["confidence_margin_sum"] += float(item.get("confidence_margin_sum", 0.0))
 
     # Compute sentiment score: (positive - negative) / total, handle zero division
     result = []
@@ -88,9 +90,13 @@ def categories_summary(
             cat_data["sentiment_score"] = round(
                 (cat_data["positive"] - cat_data["negative"]) / total, 4
             )
+            cat_data["avg_confidence"] = round(cat_data["confidence_margin_sum"] / total, 4)
         else:
             cat_data["total"] = 0
             cat_data["sentiment_score"] = 0.0
+            cat_data["avg_confidence"] = 0.0
+            
+        del cat_data["confidence_margin_sum"]
         result.append(cat_data)
 
     result.sort(key=lambda c: c["sentiment_score"], reverse=True)

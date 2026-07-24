@@ -16,7 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
 import { Slider } from "@/components/ui/slider";
-import { ChevronDown, ChevronRight, Clock, Filter, Search, Upload } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronRight, Clock, Filter, Search, Upload } from "lucide-react";
 import { getCategoriesSummary, getIssuesDistribution, getReviews, correctReview } from "@/api/client";
 import { loadColumnMap } from "@/hooks/useColumnMap";
 import { useSessionStore } from "@/hooks/useSessionStore";
@@ -24,6 +24,8 @@ import type { Correction, CategorySummary, IssueCount, Review, ReviewFilters } f
 import { DashboardPage } from "@/components/dashboard-layout";
 import { DateRangeFilter, type DateRangeValue } from "@/components/DateRangeFilter";
 import { cn } from "@/lib/utils";
+
+const LOW_CONFIDENCE_THRESHOLD = 0.15;
 
 const SENT_STYLE: Record<string, string> = {
   positive: "chip-positive",
@@ -165,8 +167,19 @@ function ReviewCard({ review, colMap, onClick }: {
             )}
           </div>
           <div className="text-right">
-            <p className="text-[10px] text-muted-foreground uppercase font-bold">AI Confidence</p>
-            <p className="font-number text-sm font-bold text-primary">{Number(review.confidence_margin).toFixed(3)}</p>
+            <p className="text-[10px] text-muted-foreground uppercase font-bold flex items-center justify-end gap-1">
+              AI Confidence
+            </p>
+            {(() => {
+              const confVal = Number(review.confidence_margin);
+              const isLowConf = confVal > 0 && confVal < LOW_CONFIDENCE_THRESHOLD;
+              return (
+                <p className={cn("font-number text-sm font-bold", isLowConf ? "text-warning" : "text-primary")}>
+                  {isLowConf && <AlertTriangle className="inline-block w-3 h-3 mr-1 -mt-0.5" />}
+                  {confVal.toFixed(3)}
+                </p>
+              );
+            })()}
           </div>
         </div>
         {/* Review text */}

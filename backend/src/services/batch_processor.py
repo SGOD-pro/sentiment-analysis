@@ -188,6 +188,11 @@ def process_batch(batch_id: str) -> None:
             # Accumulate aggregates
             _accum_aggregate(agg_accum, f"TREND#{category}#{week}", sentiment)
             _accum_aggregate(agg_accum, f"CAT#{category}", sentiment)
+            
+            conf_margin = float(result.get("sentiment_confidence_margin", 0))
+            _accum_aggregate_sum(agg_accum, f"TREND#{category}#{week}", "confidence_margin_sum", conf_margin)
+            _accum_aggregate_sum(agg_accum, f"CAT#{category}", "confidence_margin_sum", conf_margin)
+            
             if result.get("issue_tag"):
                 source = result.get("cluster_source", "cross_category_fallback")
                 # Updated format: ISSUE#{tag}#{source}#{week}
@@ -233,6 +238,13 @@ def _accum_aggregate(accum: dict, agg_type: str, metric: str) -> None:
     if agg_type not in accum:
         accum[agg_type] = {}
     accum[agg_type][metric] = accum[agg_type].get(metric, 0) + 1
+
+
+def _accum_aggregate_sum(accum: dict, agg_type: str, metric: str, val: float) -> None:
+    """Accumulate a sum of values in-memory before flushing."""
+    if agg_type not in accum:
+        accum[agg_type] = {}
+    accum[agg_type][metric] = accum[agg_type].get(metric, 0.0) + val
 
 
 def _flush_aggregates(tables, batch_id: str, accum: dict) -> None:
