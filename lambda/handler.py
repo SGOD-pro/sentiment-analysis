@@ -187,7 +187,7 @@ def assign_issue_cluster(embedding: np.ndarray, category: str):
     only invoking this when sentiment == negative.
     """
     cfg = CONFIG["issue_detection"]
-    
+    category_key = category.replace(" ", "_") 
     # Backward compatibility with old config structure
     has_new_config = "per_category_clusters" in cfg
     
