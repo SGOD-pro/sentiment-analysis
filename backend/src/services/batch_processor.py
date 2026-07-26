@@ -14,10 +14,16 @@ Example:
 import csv
 import io
 import json
+import os
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
+
+# ponytail: 1024MB Lambda == 1 vCPU; 2 workers lets one ONNX run while another waits on I/O.
+# Local: half the physical cores prevents system freeze during CPU-heavy ONNX inference.
+# Upgrade path: expose as LAMBDA_MAX_WORKERS env var once tested on larger memory tiers.
+_MAX_WORKERS = 2 if os.environ.get("AWS_EXECUTION_ENV") else max(2, (os.cpu_count() or 2) // 2)
 
 from config import get_settings
 from database import get_s3_client, get_tables
@@ -111,7 +117,7 @@ def process_batch(batch_id: str) -> None:
         categories = [row.get(category_col, "") if category_col else "" for row in chunk]
         return invoke_lambda(texts, categories)
 
-    with ThreadPoolExecutor(max_workers=min(len(chunks), 6)) as pool:
+    with ThreadPoolExecutor(max_workers=min(len(chunks), _MAX_WORKERS)) as pool:
         futures = {pool.submit(_invoke_chunk, chunk): chunk for chunk in chunks}
         for future in as_completed(futures):
             chunk = futures[future]

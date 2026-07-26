@@ -40,6 +40,10 @@ Parameters:
   DynamoDBAggregatesTable:
     Type: String
     Default: Aggregates
+  DynamoDBCorrectionsTable:
+    Type: String
+    Default: Corrections
+    Description: DynamoDB table for human correction/relabelling records
 
 Resources:
   # ── FastAPI backend Lambda — routes, DynamoDB, S3, invokes MLInferenceFunction ──
@@ -58,6 +62,7 @@ Resources:
           DYNAMODB_REVIEWS_TABLE: !Ref DynamoDBReviewsTable
           DYNAMODB_BATCHES_TABLE: !Ref DynamoDBBatchesTable
           DYNAMODB_AGGREGATES_TABLE: !Ref DynamoDBAggregatesTable
+          DYNAMODB_CORRECTIONS_TABLE: !Ref DynamoDBCorrectionsTable
           ML_INFERENCE_FUNCTION_NAME: !Ref MLInferenceFunction
       Policies:
         - S3CrudPolicy:
@@ -68,6 +73,8 @@ Resources:
             TableName: !Ref DynamoDBBatchesTable
         - DynamoDBCrudPolicy:
             TableName: !Ref DynamoDBAggregatesTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref DynamoDBCorrectionsTable
         - LambdaInvokePolicy:
             FunctionName: !Ref MLInferenceFunction
         - Statement:
@@ -185,6 +192,28 @@ Resources:
           KeyType: HASH
         - AttributeName: agg_type
           KeyType: RANGE
+
+  CorrectionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Ref DynamoDBCorrectionsTable
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: correction_id
+          AttributeType: S
+        - AttributeName: review_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: correction_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: review-corrections-index
+          KeySchema:
+            - AttributeName: review_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+
   # ── API Gateway HTTP API (v2) ────────────────────────────────────────────
   SentiMetricHttpApi:
     Type: AWS::Serverless::HttpApi

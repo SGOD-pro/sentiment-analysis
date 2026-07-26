@@ -135,15 +135,15 @@ export default function Upload() {
   // Poll batch status
   useEffect(() => {
     if (step !== "processing" || !batchId) return;
-    const MAX_POLL_TIME = 300000; // 5 minutes in ms
+    // ~30ms per row at batch_size=80, min 2 min, max 30 min
+    const warnAfterMs = total > 0 ? Math.min(Math.max(total * 30, 120_000), 1_800_000) : 300_000;
     const startTime = Date.now();
     let timeoutId: ReturnType<typeof setTimeout>;
 
     const poll = async () => {
       const elapsed = Date.now() - startTime;
-      if (elapsed > MAX_POLL_TIME) {
-        setError("Processing is taking longer than expected. Check back later or contact support.");
-        return; // stop polling
+      if (elapsed > warnAfterMs) {
+        setError("Processing is taking longer than expected. Still working in the background…");
       }
       try {
         const res = await getBatchStatus(batchId);
@@ -157,6 +157,7 @@ export default function Upload() {
             const finalTotal = res.data.total_reviews;
             
             setTimeout(() => {
+              setError(""); // clear warning on completion
               setStep("done");
               session.setStatus("done");
               session.setProcessedCount(Number(finalTotal));
@@ -172,7 +173,8 @@ export default function Upload() {
         }
       } catch { /* retry */ }
       
-      const nextInterval = (Date.now() - startTime) < 10000 ? 500 : 2000;
+      // Slow to 5s after warning threshold; fast early, medium normally
+      const nextInterval = elapsed > warnAfterMs ? 5000 : elapsed < 10000 ? 500 : 2000;
       timeoutId = setTimeout(poll, nextInterval);
     };
 

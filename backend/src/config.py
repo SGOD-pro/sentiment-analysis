@@ -56,7 +56,10 @@ class Settings(BaseSettings):
         default="sentimetric-ml-inference",
         validation_alias="ML_INFERENCE_FUNCTION_NAME",
     )
-    lambda_batch_size: int = 20
+    # Optimised for 1024MB Lambda: 80 reviews ≈ 40MB peak ONNX pass, ~275MB total.
+    # Leaves >700MB headroom. Reduces chunk count from 510→128 for a 10k-row file.
+    # Do NOT raise above 100 without re-profiling memory on the deployed Lambda layer.
+    lambda_batch_size: int = Field(default=80, validation_alias="LAMBDA_BATCH_SIZE")
 
     # Upload limits
     max_upload_size_mb: int = 50

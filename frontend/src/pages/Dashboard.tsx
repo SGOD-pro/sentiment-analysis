@@ -293,9 +293,9 @@ export default function Dashboard() {
                 <defs>
                   {[["pos", "#05B169"], ["neu", "#7C828A"], ["neg", "#CF202F"]].map(([id, c]) => (
                     <linearGradient key={id} id={`g-${id}`} x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor={c} stopOpacity={0.2} />
-                      <stop offset="95%" stopColor={c} stopOpacity={0} />
-                    </linearGradient>
+                      <stop offset="5%" stopColor={c} stopOpacity={.90} />
+                      <stop offset="80%" stopColor={c} stopOpacity={.40} />
+                    </linearGradient> 
                   ))}
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="oklch(var(--border))" />
@@ -397,41 +397,75 @@ export default function Dashboard() {
               <div className="h-60 flex items-center justify-center">
                 <p className="text-xs text-muted-foreground">No issue data</p>
               </div>
-            ) : (
-              <ResponsiveContainer width="100%" height={280}>
-                <PieChart margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
-                  <Pie
-                    data={issues.slice(0, 8)}
-                    dataKey="count"
-                    nameKey="issue_tag"
-                    cx="50%"
-                    cy="50%"
-                    outerRadius={90}
-                    label={({ name, percent }) => `${name.replaceAll("_", " ")} (${(percent * 100).toFixed(0)}%)`}
-                    labelLine={true}
-                  >
-                    {issues.slice(0, 8).map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={['#CF202F', '#E55353', '#F98B8B', '#FCA5A5', '#FECACA', '#FEE2E2', '#F3F4F6', '#E5E7EB'][index % 8]} />
+            ) : (() => {
+              const COLORS = [
+                "#6366F1", // indigo
+                "#F59E0B", // amber
+                "#10B981", // emerald
+                "#EF4444", // red
+                "#8B5CF6", // violet
+                "#06B6D4", // cyan
+                "#F97316", // orange
+                "#EC4899", // pink
+              ];
+              const slices = issues.slice(0, 8);
+              const total = slices.reduce((s, d) => s + d.count, 0);
+              return (
+                <>
+                  <ResponsiveContainer width="100%" height={280}>
+                    <PieChart margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
+                      <Pie
+                        data={slices}
+                        dataKey="count"
+                        nameKey="issue_tag"
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={70}
+                        outerRadius={140}
+                        paddingAngle={5}
+                        cornerRadius={8}
+                        label={false}
+                        labelLine={false}
+                        stroke="none"
+                      >
+                        {slices.map((_, index) => (
+                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="transparent" />
+                        ))}
+                      </Pie>
+                      <Tooltip
+                        isAnimationActive={false}
+                        content={({ active, payload }) => {
+                          if (active && payload && payload.length) {
+                            const d = payload[0].payload;
+                            const pct = ((d.count / total) * 100).toFixed(1);
+                            return (
+                              <div className="bg-background border border-border p-3 rounded-lg shadow-lg text-xs space-y-1 min-w-[160px]">
+                                <p className="font-semibold capitalize">{d.issue_tag.replaceAll("_", " ")}</p>
+                                <p className="text-muted-foreground">Count: <span className="text-foreground font-medium">{d.count}</span></p>
+                                <p className="text-muted-foreground">Share: <span className="text-foreground font-medium">{pct}%</span></p>
+                                <p className="text-muted-foreground">Source: <span className="text-foreground font-medium">{d.cluster_source === "per_category" ? "Category Specific" : "Global Fallback"}</span></p>
+                              </div>
+                            );
+                          }
+                          return null;
+                        }}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                  {/* Bottom legend — colour swatches only, no lines */}
+                  <div className="flex flex-wrap justify-center gap-x-4 gap-y-2 mt-3">
+                    {slices.map((d, i) => (
+                      <div key={d.issue_tag} className="flex items-center gap-1.5">
+                        <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: COLORS[i % COLORS.length] }} />
+                        <span className="text-[11px] text-muted-foreground capitalize leading-none">
+                          {d.issue_tag.replaceAll("_", " ")}
+                        </span>
+                      </div>
                     ))}
-                  </Pie>
-                  <Tooltip
-                    content={({ active, payload }) => {
-                      if (active && payload && payload.length) {
-                        const data = payload[0].payload;
-                        return (
-                          <div className="bg-background border border-border p-3 rounded-lg shadow-sm text-xs">
-                            <p className="font-bold mb-1">{data.issue_tag.replaceAll("_", " ")}</p>
-                            <p>Count: {data.count}</p>
-                            <p>Source: {data.cluster_source === 'per_category' ? 'Category Specific' : 'Global Fallback'}</p>
-                          </div>
-                        );
-                      }
-                      return null;
-                    }}
-                  />
-                </PieChart>
-              </ResponsiveContainer>
-            )}
+                  </div>
+                </>
+              );
+            })()}
           </CardContent>
         </Card>
       </div>
