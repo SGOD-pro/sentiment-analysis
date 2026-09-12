@@ -168,30 +168,51 @@ function NoSessionPrompt() {
 export default function Dashboard() {
   const colMap = loadColumnMap();
   const batchId = useSessionStore((s) => s.batchId);
-  const [weeks, setWeeks] = useState<TrendWeek[]>([]);
-  const [categories, setCategories] = useState<CategorySummary[]>([]);
-  const [issues, setIssues] = useState<IssueCount[]>([]);
-  const [loading, setLoading] = useState(true);
+  const storeWeeks = useSessionStore((s) => s.weeks);
+  const storeCategories = useSessionStore((s) => s.categories);
+  const storeIssues = useSessionStore((s) => s.issues);
+  const analyticsLoading = useSessionStore((s) => s.analyticsLoading);
+  const fetchAnalytics = useSessionStore((s) => s.fetchAnalytics);
+
+  const [filteredWeeks, setFilteredWeeks] = useState<TrendWeek[] | null>(null);
+  const [filteredCategories, setFilteredCategories] = useState<CategorySummary[] | null>(null);
+  const [filteredIssues, setFilteredIssues] = useState<IssueCount[] | null>(null);
+  const [filterLoading, setFilterLoading] = useState(false);
   const [filters, setFilters] = useState<Filters>(INITIAL_FILTERS);
+
+  const hasFilter = filters.category !== "all" || Boolean(filters.dateRange.from || filters.dateRange.to);
 
   const updateFilters = (partial: Partial<Filters>) =>
     setFilters((prev) => ({ ...prev, ...partial }));
 
   useEffect(() => {
-    if (!batchId) { setLoading(false); return; }
-    setLoading(true);
-    const cat = filters.category !== "all" ? filters.category : undefined;
-    const { from, to } = filters.dateRange;
-    Promise.all([
-      getTrends(batchId, from, to, cat),
-      getCategoriesSummary(batchId, from, to),
-      getIssuesDistribution(batchId, from, to, cat),
-    ]).then(([t, c, i]) => {
-      if (t.data) setWeeks(t.data.weeks);
-      if (c.data) setCategories(c.data.categories);
-      if (i.data) setIssues(i.data.issues);
-    }).finally(() => setLoading(false));
-  }, [batchId, filters.category, filters.dateRange]);
+    if (!batchId) return;
+
+    if (hasFilter) {
+      setFilterLoading(true);
+      const cat = filters.category !== "all" ? filters.category : undefined;
+      const { from, to } = filters.dateRange;
+      Promise.all([
+        getTrends(batchId, from, to, cat),
+        getCategoriesSummary(batchId, from, to),
+        getIssuesDistribution(batchId, from, to, cat),
+      ]).then(([t, c, i]) => {
+        if (t.data) setFilteredWeeks(t.data.weeks);
+        if (c.data) setFilteredCategories(c.data.categories);
+        if (i.data) setFilteredIssues(i.data.issues);
+      }).finally(() => setFilterLoading(false));
+    } else {
+      setFilteredWeeks(null);
+      setFilteredCategories(null);
+      setFilteredIssues(null);
+      fetchAnalytics(batchId);
+    }
+  }, [batchId, filters.category, filters.dateRange, hasFilter, fetchAnalytics]);
+
+  const weeks = hasFilter && filteredWeeks ? filteredWeeks : storeWeeks;
+  const categories = hasFilter && filteredCategories ? filteredCategories : storeCategories;
+  const issues = hasFilter && filteredIssues ? filteredIssues : storeIssues;
+  const loading = hasFilter ? filterLoading : (analyticsLoading && storeCategories.length === 0);
 
   if (!batchId) return <DashboardPage sidebar={<div className="p-5"><p className="text-xs text-muted-foreground">No active session</p></div>}><NoSessionPrompt /></DashboardPage>;
 
@@ -407,10 +428,10 @@ export default function Dashboard() {
                     cx="50%"
                     cy="50%"
                     outerRadius={90}
-                    label={({ name, percent }) => `${name.replaceAll("_", " ")} (${(percent * 100).toFixed(0)}%)`}
+                    label={({ name, percent }) => `${String(name ?? "").replaceAll("_", " ")} (${(((percent ?? 0) * 100)).toFixed(0)}%)`}
                     labelLine={true}
                   >
-                    {issues.slice(0, 8).map((entry, index) => (
+                    {issues.slice(0, 8).map((_, index) => (
                       <Cell key={`cell-${index}`} fill={['#CF202F', '#E55353', '#F98B8B', '#FCA5A5', '#FECACA', '#FEE2E2', '#F3F4F6', '#E5E7EB'][index % 8]} />
                     ))}
                   </Pie>

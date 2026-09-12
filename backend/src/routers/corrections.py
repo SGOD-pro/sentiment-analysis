@@ -19,8 +19,11 @@ from fastapi import APIRouter
 from pydantic import BaseModel, field_validator
 
 from cache import cache_delete_prefix
-from database import get_tables
+from database import get_dynamodb_resource, get_tables
+from logger import get_logger
 from models import ApiResponse
+
+log = get_logger(__name__)
 
 router = APIRouter(prefix="/api")
 
@@ -122,23 +125,24 @@ def get_admin_corrections(format: str | None = None):
     reviews_map = {}
 
     if review_ids:
-        # We need the low-level dynamodb client for batch_get_item
-        import boto3
-        dynamodb = boto3.resource("dynamodb", region_name="ap-south-1")
-        
-        for i in range(0, len(review_ids), 100):
-            batch_keys = [{"review_id": r_id} for r_id in review_ids[i:i+100]]
-            batch_response = dynamodb.batch_get_item(
-                RequestItems={
-                    tables.reviews.name: {
-                        "Keys": batch_keys,
-                        "ProjectionExpression": "review_id, confidence_margin, category"
+        try:
+            ddb = get_dynamodb_resource()
+            for i in range(0, len(review_ids), 100):
+                batch_keys = [{"review_id": r_id} for r_id in review_ids[i:i+100]]
+                batch_response = ddb.batch_get_item(
+                    RequestItems={
+                        tables.reviews.name: {
+                            "Keys": batch_keys,
+                            "ProjectionExpression": "review_id, confidence_margin, category"
+                        }
                     }
-                }
-            )
-            batch_reviews = batch_response.get("Responses", {}).get(tables.reviews.name, [])
-            for br in batch_reviews:
-                reviews_map[br["review_id"]] = br
+                )
+                batch_reviews = batch_response.get("Responses", {}).get(tables.reviews.name, [])
+                for br in batch_reviews:
+                    reviews_map[br["review_id"]] = br
+        except Exception as e:
+            # ponytail: do not fail entire corrections panel if review metadata lookup fails
+            log.warning("Failed to fetch review metadata for corrections: %s", e)
 
     for item in items:
         r_info = reviews_map.get(item["review_id"], {})

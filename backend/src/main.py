@@ -50,7 +50,7 @@ app = FastAPI(title=settings.app_name, debug=settings.debug, lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],  # ponytail: tighten to frontend origin in production
+    allow_origins=["http://localhost:5173", "http://localhost:5174"],  # ponytail: tighten to frontend origin in production
     allow_methods=["*"],
     allow_headers=["*"],
 )

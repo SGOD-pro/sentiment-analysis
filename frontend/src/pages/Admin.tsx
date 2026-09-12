@@ -7,13 +7,15 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { ArrowUpDown, Download, ChevronDown, ChevronUp, Lock } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { ArrowLeft, ArrowUpDown, Download, ChevronDown, ChevronUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Logo } from "@/components/Logo";
 
-const BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+const BASE = import.meta.env.VITE_API_URL ?? import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
 interface AdminCorrection {
   correction_id: string;
@@ -79,6 +81,7 @@ function SortButton({
 }
 
 function AdminDashboard() {
+  const navigate = useNavigate();
   const [rows, setRows] = useState<AdminCorrection[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -94,12 +97,16 @@ function AdminDashboard() {
   useEffect(() => {
     setLoading(true);
     fetch(`${BASE}/api/admin/corrections`)
-      .then((r) => r.json())
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}: Failed to fetch corrections`);
+        return r.json();
+      })
       .then((res) => {
         if (!res.success) throw new Error(res.message ?? "Failed to load corrections");
         setRows(res.data.corrections ?? []);
         setTotalCorrections(res.data.total ?? 0);
         setBatchCount(res.data.batch_count ?? 0);
+        setError(null);
       })
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
@@ -133,16 +140,26 @@ function AdminDashboard() {
         {/* Header */}
         <div className="flex items-start justify-between">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight">Admin — Corrections</h1>
+            <div className="flex items-center gap-3">
+              <h1 className="text-2xl font-bold tracking-tight">Admin — Corrections</h1>
+              <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                Authenticated
+              </span>
+            </div>
             <p className="text-muted-foreground text-sm mt-1">
-              Human label corrections collected for ML retraining.{" "}
-              <span className="text-amber-400 font-medium">No auth (v1)</span>
+              Human label corrections collected for ML retraining.
             </p>
           </div>
-          <Button onClick={handleExport} variant="outline" size="sm" className="gap-1.5">
-            <Download className="w-4 h-4" />
-            Export CSV
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button onClick={() => navigate("/")} variant="ghost" size="sm" className="gap-1.5 text-muted-foreground">
+              <ArrowLeft className="w-4 h-4" />
+              Back to App
+            </Button>
+            <Button onClick={handleExport} variant="outline" size="sm" className="gap-1.5">
+              <Download className="w-4 h-4" />
+              Export CSV
+            </Button>
+          </div>
         </div>
 
         {/* Summary */}
@@ -347,8 +364,8 @@ export default function Admin() {
       <div className="min-h-screen bg-background flex flex-col items-center justify-center p-6">
         <Card className="w-full max-w-2xl">
           <CardHeader className="text-center pb-4">
-            <div className="mx-auto bg-primary/10 w-12 h-12 rounded-full flex items-center justify-center mb-4">
-              <Lock className="w-6 h-6 text-primary" />
+            <div className="flex justify-center mb-4">
+              <Logo variant="stacked" linkTo="" />
             </div>
             <CardTitle className="text-2xl">Admin Access</CardTitle>
             <CardDescription>Enter the admin password to continue</CardDescription>

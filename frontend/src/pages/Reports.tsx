@@ -25,23 +25,52 @@ const BAR_COLORS: Record<string, string> = {
 export default function Reports() {
   const batchId = useSessionStore((s) => s.batchId);
   const navigate = useNavigate();
-  const [categories, setCategories] = useState<CategorySummary[]>([]);
-  const [issues, setIssues] = useState<IssueCount[]>([]);
-  const [loading, setLoading] = useState(true);
+
+  const storeCategories = useSessionStore((s) => s.categories);
+  const storeIssues = useSessionStore((s) => s.issues);
+  const storeBatchStatus = useSessionStore((s) => s.batchStatus);
+  const analyticsBatchId = useSessionStore((s) => s.analyticsBatchId);
+  const analyticsLoading = useSessionStore((s) => s.analyticsLoading);
+  const fetchAnalytics = useSessionStore((s) => s.fetchAnalytics);
+
+  const [customCategories, setCustomCategories] = useState<CategorySummary[] | null>(null);
+  const [customIssues, setCustomIssues] = useState<IssueCount[] | null>(null);
+  const [customBatchStatus, setCustomBatchStatus] = useState<BatchStatus | null>(null);
+  const [filterLoading, setFilterLoading] = useState(false);
   const [dateRange, setDateRange] = useState<DateRangeValue>({});
-  const [batchStatus, setBatchStatus] = useState<BatchStatus | null>(null);
+
+  const hasDateFilter = Boolean(dateRange.from || dateRange.to);
 
   useEffect(() => {
-    if (!batchId) { setLoading(false); return; }
-    setLoading(true);
-    const { from, to } = dateRange;
-    Promise.all([getCategoriesSummary(batchId, from, to), getIssuesDistribution(batchId, from, to), getBatchStatus(batchId)])
-      .then(([c, i, bs]) => {
-        if (c.data) setCategories(c.data.categories);
-        if (i.data) setIssues(i.data.issues);
-        if (bs.data) setBatchStatus(bs.data);
-      }).finally(() => setLoading(false));
-  }, [batchId, dateRange]);
+    if (!batchId) return;
+
+    if (!hasDateFilter) {
+      setCustomCategories(null);
+      setCustomIssues(null);
+      setCustomBatchStatus(null);
+      fetchAnalytics(batchId);
+    } else {
+      setFilterLoading(true);
+      const { from, to } = dateRange;
+      Promise.all([
+        getCategoriesSummary(batchId, from, to),
+        getIssuesDistribution(batchId, from, to),
+        getBatchStatus(batchId),
+      ])
+        .then(([c, i, bs]) => {
+          if (c.data) setCustomCategories(c.data.categories);
+          if (i.data) setCustomIssues(i.data.issues);
+          if (bs.data) setCustomBatchStatus(bs.data);
+        })
+        .finally(() => setFilterLoading(false));
+    }
+  }, [batchId, dateRange, hasDateFilter, fetchAnalytics]);
+
+  const categories = hasDateFilter ? (customCategories ?? []) : storeCategories;
+  const issues = hasDateFilter ? (customIssues ?? []) : storeIssues;
+  const batchStatus = hasDateFilter ? customBatchStatus : storeBatchStatus;
+  const isCacheReady = analyticsBatchId === batchId && storeCategories.length > 0;
+  const loading = hasDateFilter ? filterLoading : (analyticsLoading || !isCacheReady);
 
   if (!batchId) {
     return (

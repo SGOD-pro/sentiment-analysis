@@ -17,10 +17,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
 import { Slider } from "@/components/ui/slider";
 import { AlertTriangle, ChevronDown, ChevronRight, Clock, Filter, Search, Upload } from "lucide-react";
-import { getCategoriesSummary, getIssuesDistribution, getReviews, correctReview } from "@/api/client";
+import { correctReview } from "@/api/client";
 import { loadColumnMap } from "@/hooks/useColumnMap";
 import { useSessionStore } from "@/hooks/useSessionStore";
-import type { Correction, CategorySummary, IssueCount, Review, ReviewFilters } from "@/types";
+import type { Correction, Review, ReviewFilters } from "@/types";
 import { DashboardPage } from "@/components/dashboard-layout";
 import { DateRangeFilter, type DateRangeValue } from "@/components/DateRangeFilter";
 import { cn } from "@/lib/utils";
@@ -206,19 +206,23 @@ export default function Reviews() {
   const colMap = loadColumnMap();
   const batchId = useSessionStore((s) => s.batchId);
   const navigate = useNavigate();
-  const [reviews, setReviews] = useState<Review[]>([]);
-  const [total, setTotal] = useState(0);
-  const [totalPages, setTotalPages] = useState(1);
+  const reviews = useSessionStore((s) => s.reviews);
+  const total = useSessionStore((s) => s.reviewsTotal);
+  const totalPages = useSessionStore((s) => s.reviewsTotalPages);
+  const reviewsLoading = useSessionStore((s) => s.reviewsLoading);
+  const reviewsBatchId = useSessionStore((s) => s.reviewsBatchId);
+  const catOptions = useSessionStore((s) => s.categories);
+  const issueOptions = useSessionStore((s) => s.issues);
+  const corrections = useSessionStore((s) => s.corrections);
+  const fetchAnalytics = useSessionStore((s) => s.fetchAnalytics);
+  const fetchReviews = useSessionStore((s) => s.fetchReviews);
+  const addCorrection = useSessionStore((s) => s.addCorrection);
+
   const [page, setPage] = useState(1);
-  const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Review | null>(null);
 
-  // Optimistic correction map: review_id -> Correction
-  const [corrections, setCorrections] = useState<Record<string, Correction>>({});
-
   function handleCorrect(reviewId: string, _label: string, correction: Correction) {
-    setCorrections((prev) => ({ ...prev, [reviewId]: correction }));
-    // Also update the selected dialog if it's the same review
+    addCorrection(reviewId, correction);
     setSelected((prev) => prev && prev.review_id === reviewId ? { ...prev, correction } : prev);
   }
 
@@ -229,19 +233,14 @@ export default function Reviews() {
   const [minConf, setMinConf] = useState(0);
   const [dateRange, setDateRange] = useState<DateRangeValue>({});
 
-  // Option lists
-  const [catOptions, setCatOptions] = useState<CategorySummary[]>([]);
-  const [issueOptions, setIssueOptions] = useState<IssueCount[]>([]);
+  useEffect(() => {
+    if (batchId) {
+      fetchAnalytics(batchId);
+    }
+  }, [batchId, fetchAnalytics]);
 
   useEffect(() => {
-    if (!batchId) { setLoading(false); return; }
-    getCategoriesSummary(batchId).then((r) => { if (r.data) setCatOptions(r.data.categories); });
-    getIssuesDistribution(batchId).then((r) => { if (r.data) setIssueOptions(r.data.issues); });
-  }, [batchId]);
-
-  useEffect(() => {
-    if (!batchId) { setLoading(false); return; }
-    setLoading(true);
+    if (!batchId) return;
     const f: ReviewFilters = { page, limit: 25 };
     if (sentiment !== "all") f.sentiment = sentiment;
     if (category !== "all") f.category = category;
@@ -249,13 +248,10 @@ export default function Reviews() {
     if (dateRange.from) f.from = dateRange.from;
     if (dateRange.to) f.to = dateRange.to;
 
-    getReviews(batchId, f).then((r) => {
-      if (!r.success) { toast.error(r.message ?? "Failed to load reviews"); return; }
-      setReviews(r.data?.reviews ?? []);
-      setTotal(r.data?.total ?? 0);
-      setTotalPages(r.data?.total_pages ?? 1);
-    }).finally(() => setLoading(false));
-  }, [batchId, page, sentiment, category, issueTag, minConf, dateRange]);
+    fetchReviews(batchId, f);
+  }, [batchId, page, sentiment, category, issueTag, dateRange, fetchReviews]);
+
+  const loading = reviewsLoading || (reviewsBatchId !== batchId && !!batchId);
 
   if (!batchId) {
     return (

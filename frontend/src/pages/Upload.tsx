@@ -161,6 +161,7 @@ export default function Upload() {
               session.setStatus("done");
               session.setProcessedCount(Number(finalTotal));
               toast.success(`Analysis complete — ${finalTotal} reviews processed`);
+              session.fetchAnalytics(batchId, true);
             }, delay);
             return;
           }

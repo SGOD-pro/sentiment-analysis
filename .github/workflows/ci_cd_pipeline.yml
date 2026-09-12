@@ -1,0 +1,471 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      force_backend:
+        description: "Force deploy backend (even if no changes detected)"
+        type: boolean
+        default: false
+      force_frontend:
+        description: "Force deploy frontend (even if no changes detected)"
+        type: boolean
+        default: false
+      force_ml:
+        description: "Force deploy ML inference function (even if no changes detected)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ──────────────────────────────────────────────────────────────
+  # JOB 1 — Detect Changed Paths
+  # ──────────────────────────────────────────────────────────────
+  detect-changes:
+    name: "🔍 Detect Changes"
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.changes.outputs.backend }}
+      frontend: ${{ steps.changes.outputs.frontend }}
+      ml: ${{ steps.changes.outputs.ml }}
+      deploy_infra: ${{ steps.changes.outputs.deploy_infra }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect changed paths
+        id: changes
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch origin ${{ github.base_ref }} --depth=1
+            CHANGED=$(git diff --name-only origin/${{ github.base_ref }} HEAD 2>/dev/null || echo "")
+          elif [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ] || [ -z "${{ github.event.before }}" ]; then
+            CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "")
+          else
+            CHANGED=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} 2>/dev/null || git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "")
+          fi
+
+          echo "📝 Changed files in this event:"
+          if [ -z "$CHANGED" ]; then
+            echo "  (none detected or manual force trigger)"
+          else
+            echo "$CHANGED" | sed 's/^/  /'
+          fi
+
+          BACKEND=false
+          FRONTEND=false
+          ML=false
+          DEPLOY_INFRA=false
+
+          echo "$CHANGED" | grep -qE "^backend/" && BACKEND=true
+          echo "$CHANGED" | grep -qE "^frontend/" && FRONTEND=true
+          echo "$CHANGED" | grep -qE "^lambda/" && ML=true
+          echo "$CHANGED" | grep -qE "^backend/deploy/" && DEPLOY_INFRA=true
+
+          # If deploy template/samconfig changed, redeploy both backend and ML
+          [ "$DEPLOY_INFRA" = "true" ] && BACKEND=true && ML=true
+
+          # Manual force overrides
+          [ "${{ inputs.force_backend }}" = "true" ] && BACKEND=true
+          [ "${{ inputs.force_frontend }}" = "true" ] && FRONTEND=true
+          [ "${{ inputs.force_ml }}" = "true" ] && ML=true
+
+          # If it's a push on main and diff was empty, default to deploying everything
+          if [ "${{ github.event_name }}" = "push" ] && [ "$BACKEND" = "false" ] && [ "$FRONTEND" = "false" ] && [ "$ML" = "false" ]; then
+            echo "ℹ️  Triggered on main branch push without path match — running full build & deploy."
+            BACKEND=true
+            FRONTEND=true
+            ML=true
+          fi
+
+          echo "backend=$BACKEND" >> "$GITHUB_OUTPUT"
+          echo "frontend=$FRONTEND" >> "$GITHUB_OUTPUT"
+          echo "ml=$ML" >> "$GITHUB_OUTPUT"
+          echo "deploy_infra=$DEPLOY_INFRA" >> "$GITHUB_OUTPUT"
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  🔧 Backend changed      : $BACKEND"
+          echo "  🧠 ML Lambda changed    : $ML"
+          echo "  🎨 Frontend changed     : $FRONTEND"
+          echo "  📐 Deploy infra changed : $DEPLOY_INFRA"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  # ──────────────────────────────────────────────────────────────
+  # JOB 2 — Backend Tests
+  # ──────────────────────────────────────────────────────────────
+  test-backend:
+    name: "🧪 Test Backend"
+    needs: detect-changes
+    if: needs.detect-changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+          enable-cache: true
+          cache-dependency-glob: "backend/uv.lock"
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Run health check test
+        run: |
+          PYTHONPATH=src uv run uvicorn src.main:app --host 0.0.0.0 --port 8000 &
+          UVICORN_PID=$!
+          echo "Waiting for backend server to start (PID $UVICORN_PID)..."
+          for i in {1..20}; do
+            if curl -s http://localhost:8000/health | grep -q "status"; then
+              echo "✅ Health check successful!"
+              kill $UVICORN_PID 2>/dev/null || true
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "❌ Health check failed!"
+          kill $UVICORN_PID 2>/dev/null || true
+          exit 1
+        env:
+          AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID || 'testing' }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY || 'testing' }}
+          AWS_DEFAULT_REGION:    ${{ secrets.AWS_REGION || 'ap-south-1' }}
+          DYNAMODB_REVIEWS_TABLE:    ${{ secrets.DYNAMODB_REVIEWS_TABLE || 'ReviewsTest' }}
+          DYNAMODB_BATCHES_TABLE:    ${{ secrets.DYNAMODB_BATCHES_TABLE || 'BatchesTest' }}
+          DYNAMODB_AGGREGATES_TABLE: ${{ secrets.DYNAMODB_AGGREGATES_TABLE || 'AggregatesTest' }}
+          S3_BUCKET_NAME:        ${{ secrets.S3_BUCKET_NAME || 'sentimetric-prod-storage' }}
+          ENVIRONMENT:           testing
+          LOG_LEVEL:             DEBUG
+
+      - name: Run pytest suite
+        run: uv run pytest tests/ -v
+        env:
+          AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID || 'testing' }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY || 'testing' }}
+          AWS_DEFAULT_REGION:    ${{ secrets.AWS_REGION || 'ap-south-1' }}
+          DYNAMODB_REVIEWS_TABLE:    ${{ secrets.DYNAMODB_REVIEWS_TABLE || 'ReviewsTest' }}
+          DYNAMODB_BATCHES_TABLE:    ${{ secrets.DYNAMODB_BATCHES_TABLE || 'BatchesTest' }}
+          DYNAMODB_AGGREGATES_TABLE: ${{ secrets.DYNAMODB_AGGREGATES_TABLE || 'AggregatesTest' }}
+
+  # ──────────────────────────────────────────────────────────────
+  # JOB 3 — ML Inference Function Tests
+  # ──────────────────────────────────────────────────────────────
+  test-ml:
+    name: "🧪 Test ML Inference"
+    needs: detect-changes
+    if: needs.detect-changes.outputs.ml == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: lambda
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install ML Lambda dependencies ONLY
+        run: |
+          pip install onnxruntime numpy tokenizers pytest
+          echo "🔒 Verifying forbidden libraries are NOT installed..."
+          for pkg in torch transformers sentence-transformers tensorflow sklearn; do
+            if pip show "$pkg" 2>/dev/null; then
+              echo "❌ FORBIDDEN: $pkg is installed. Rules prohibit this in Lambda deploy."
+              exit 1
+            fi
+          done
+          echo "✅ No forbidden libraries present."
+
+      - name: Configure AWS credentials (if provided)
+        if: env.AWS_KEY != ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ secrets.AWS_REGION || 'ap-south-1' }}
+        env:
+          AWS_KEY: ${{ secrets.AWS_ACCESS_KEY_ID }}
+
+      - name: Sync ML artifacts from S3 (if missing locally)
+        run: |
+          if [ ! -f "artifacts/bge_onnx_quantized/model_quantized.onnx" ] && [ -n "${{ secrets.S3_BUCKET_NAME }}" ]; then
+            echo "📥 Syncing lambda/artifacts/ from S3..."
+            mkdir -p artifacts
+            aws s3 sync "s3://${{ secrets.S3_BUCKET_NAME }}/ml-artifacts/lambda_deploy_artifacts/" artifacts/ --exclude "bge_onnx_fp32/*" || true
+          fi
+
+      - name: Run handler local test (if artifacts present)
+        run: |
+          if [ -f "artifacts/bge_onnx_quantized/model_quantized.onnx" ]; then
+            export ARTIFACT_DIR="$(pwd)/artifacts"
+            python handler.py
+          else
+            echo "ℹ️  artifacts/ not available in test environment. Skipping local inference check."
+          fi
+
+  # ──────────────────────────────────────────────────────────────
+  # JOB 4 — Frontend Tests
+  # ──────────────────────────────────────────────────────────────
+  test-frontend:
+    name: "🧪 Test Frontend"
+    needs: detect-changes
+    if: needs.detect-changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type-check & Build
+        run: npm run build
+        env:
+          VITE_API_URL: ${{ secrets.VITE_API_URL || 'https://placeholder.execute-api.ap-south-1.amazonaws.com' }}
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_URL || 'https://placeholder.execute-api.ap-south-1.amazonaws.com' }}
+
+  # ──────────────────────────────────────────────────────────────
+  # JOB 5 — Auto Deploy Backend + ML Lambda → AWS (SAM)
+  # ──────────────────────────────────────────────────────────────
+  deploy-backend:
+    name: "🚀 Deploy Backend + ML Lambda → AWS"
+    needs: [detect-changes, test-backend, test-ml]
+    if: |
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      (needs.test-backend.result == 'success' || needs.test-backend.result == 'skipped') &&
+      (needs.test-ml.result == 'success' || needs.test-ml.result == 'skipped') &&
+      (needs.detect-changes.outputs.backend == 'true' || needs.detect-changes.outputs.ml == 'true')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ secrets.AWS_REGION || 'ap-south-1' }}
+
+      - name: Pull ML model artifacts from S3
+        run: |
+          echo "📥 Syncing lambda/artifacts/ from S3..."
+          mkdir -p ../lambda/artifacts
+          aws s3 sync \
+            "s3://${{ secrets.S3_BUCKET_NAME }}/ml-artifacts/lambda_deploy_artifacts/" \
+            ../lambda/artifacts/ \
+            --exclude "bge_onnx_fp32/*" || true
+          echo "✅ ML artifacts status:"
+          find ../lambda/artifacts -type f -exec du -h {} + 2>/dev/null || echo "No artifacts in lambda/artifacts"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+          enable-cache: true
+          cache-dependency-glob: "backend/uv.lock"
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Prepare backend deployment source folder
+        run: |
+          rm -rf deploy/src
+          cp -r src deploy/src
+
+      - name: Generate requirements.txt from uv.lock
+        run: |
+          uv export --no-dev --format requirements-txt --no-hashes -o requirements.txt
+          cp requirements.txt deploy/requirements.txt
+
+      - name: Generate ML Lambda requirements.txt
+        run: |
+          cat > ../lambda/requirements.txt << 'EOF'
+          onnxruntime
+          numpy
+          tokenizers
+          EOF
+
+      - name: Install AWS SAM CLI
+        uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+
+      - name: SAM Build (both functions)
+        working-directory: backend/deploy
+        run: |
+          sam build --use-container --template-file template.yaml
+
+      - name: Strip unused dependencies from ML Inference package
+        working-directory: backend/deploy
+        run: |
+          rm -rf .aws-sam/build/MLInferenceFunction/huggingface_hub*
+          rm -rf .aws-sam/build/MLInferenceFunction/hf_xet*
+          rm -rf .aws-sam/build/MLInferenceFunction/hf-xet*
+          rm -rf .aws-sam/build/MLInferenceFunction/httpx*
+          rm -rf .aws-sam/build/MLInferenceFunction/httpcore*
+
+      - name: SAM Deploy
+        working-directory: backend/deploy
+        run: |
+          STACK_NAME="${{ secrets.CLOUDFORMATION_STACK_NAME || 'sentrix' }}"
+          sam deploy \
+            --config-env default \
+            --stack-name "$STACK_NAME" \
+            --no-confirm-changeset \
+            --no-fail-on-empty-changeset \
+            --parameter-overrides \
+              FrontendOrigin="${{ secrets.FRONTEND_URL || 'https://sentrix.swyra.com' }}" \
+              S3BucketName="${{ secrets.S3_BUCKET_NAME || 'sentimetric-prod-storage' }}" \
+              DynamoDBReviewsTable="${{ secrets.DYNAMODB_REVIEWS_TABLE || 'Reviews' }}" \
+              DynamoDBBatchesTable="${{ secrets.DYNAMODB_BATCHES_TABLE || 'Batches' }}" \
+              DynamoDBAggregatesTable="${{ secrets.DYNAMODB_AGGREGATES_TABLE || 'Aggregates' }}"
+
+      - name: Output API Gateway URL
+        id: api-info
+        run: |
+          STACK_NAME="${{ secrets.CLOUDFORMATION_STACK_NAME || 'sentrix' }}"
+          REGION="${{ secrets.AWS_REGION || 'ap-south-1' }}"
+
+          API_URL=$(aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --region "$REGION" \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" \
+            --output text 2>/dev/null || echo "")
+
+          echo "api_url=$API_URL" >> "$GITHUB_OUTPUT"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  ✅  Backend + ML Lambda deployed successfully!"
+          echo "  🌐  API Gateway URL : $API_URL"
+          echo "  📋  Health check    : $API_URL/health"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  # ──────────────────────────────────────────────────────────────
+  # JOB 6 — Auto Deploy Frontend → Vercel
+  # ──────────────────────────────────────────────────────────────
+  deploy-frontend:
+    name: "🚀 Deploy Frontend → Vercel"
+    needs: [detect-changes, test-frontend, deploy-backend]
+    if: |
+      always() &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      (needs.test-frontend.result == 'success') &&
+      (needs.deploy-backend.result == 'success' || needs.deploy-backend.result == 'skipped') &&
+      (needs.detect-changes.outputs.frontend == 'true' || needs.detect-changes.outputs.backend == 'true')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ secrets.AWS_REGION || 'ap-south-1' }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Resolve backend API URL
+        id: resolve-url
+        run: |
+          STACK_NAME="${{ secrets.CLOUDFORMATION_STACK_NAME || 'sentrix' }}"
+          REGION="${{ secrets.AWS_REGION || 'ap-south-1' }}"
+
+          LIVE_URL=$(aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --region "$REGION" \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" \
+            --output text 2>/dev/null || echo "")
+
+          SECRET_URL="${{ secrets.VITE_API_URL || secrets.VITE_API_BASE_URL }}"
+
+          if [ -n "$LIVE_URL" ] && [ "$LIVE_URL" != "None" ]; then
+            echo "✅ Injected live CloudFormation URL: $LIVE_URL"
+            echo "api_url=$LIVE_URL" >> "$GITHUB_OUTPUT"
+          elif [ -n "$SECRET_URL" ]; then
+            echo "⚠️ Injected URL from GitHub Secret: $SECRET_URL"
+            echo "api_url=$SECRET_URL" >> "$GITHUB_OUTPUT"
+          else
+            echo "⚠️ No backend URL found, using fallback placeholder."
+            echo "api_url=https://placeholder.execute-api.ap-south-1.amazonaws.com" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Deploy to Vercel (production)
+        id: vercel-deploy
+        run: |
+          npx vercel \
+            --token "${{ secrets.VERCEL_TOKEN }}" \
+            --prod \
+            --yes \
+            --build-env VITE_API_URL="${{ steps.resolve-url.outputs.api_url }}" \
+            --build-env VITE_API_BASE_URL="${{ steps.resolve-url.outputs.api_url }}" | tee deploy.log
+
+          VERCEL_URL=$(grep -Eo "https://[a-zA-Z0-9._-]+\.vercel\.app" deploy.log | tail -1)
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  ✅  Frontend deployed successfully to Vercel!"
+          echo "  🌐  Vercel URL: $VERCEL_URL"
+          echo "  🔗  Injected API URL: ${{ steps.resolve-url.outputs.api_url }}"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        env:
+          VERCEL_ORG_ID:     ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}

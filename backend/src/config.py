@@ -65,7 +65,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
 
     # App
-    app_name: str = "Review Analytics API"
+    app_name: str = "SWYRA Review Analytics API"
     debug: bool = False
     reset_data_enabled: bool = False
 
