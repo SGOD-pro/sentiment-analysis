@@ -9,3 +9,5 @@ artifacts
 .aws-sam
 .pytest_cache
 __pycache__
+.vercel
+.env*

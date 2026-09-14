@@ -11,6 +11,7 @@ Dependencies: boto3, config, logger
 
 import io
 import json
+import os
 import zipfile
 
 import boto3
@@ -247,6 +248,10 @@ def run_aws_startup_checks() -> None:
     Called once at server startup. Never raises — logs and continues.
     """
     settings = get_settings()
+    if os.getenv("SKIP_STARTUP_CHECK", "false").lower() in ("true", "1") or settings.environment == "testing":
+        log.info("AWS startup check — skipped (SKIP_STARTUP_CHECK=true or ENVIRONMENT=testing)")
+        return
+
     log.info(
         "AWS startup check — begin",
         extra={

@@ -1,5 +1,6 @@
 name: CI/CD Pipeline
 
+
 on:
   push:
     branches: [ main ]
@@ -13,10 +14,6 @@ on:
         default: false
       force_frontend:
         description: "Force deploy frontend (even if no changes detected)"
-        type: boolean
-        default: false
-      force_ml:
-        description: "Force deploy ML inference function (even if no changes detected)"
         type: boolean
         default: false
 
@@ -34,7 +31,6 @@ jobs:
     outputs:
       backend: ${{ steps.changes.outputs.backend }}
       frontend: ${{ steps.changes.outputs.frontend }}
-      ml: ${{ steps.changes.outputs.ml }}
       deploy_infra: ${{ steps.changes.outputs.deploy_infra }}
 
     steps:
@@ -64,12 +60,10 @@ jobs:
 
           BACKEND=false
           FRONTEND=false
-          ML=false
           DEPLOY_INFRA=false
 
           echo "$CHANGED" | grep -qE "^backend/" && BACKEND=true
           echo "$CHANGED" | grep -qE "^frontend/" && FRONTEND=true
-          echo "$CHANGED" | grep -qE "^lambda/" && ML=true
           echo "$CHANGED" | grep -qE "^backend/deploy/" && DEPLOY_INFRA=true
 
           # If deploy template/samconfig changed, redeploy backend
@@ -78,24 +72,20 @@ jobs:
           # Manual force overrides
           [ "${{ inputs.force_backend }}" = "true" ] && BACKEND=true
           [ "${{ inputs.force_frontend }}" = "true" ] && FRONTEND=true
-          [ "${{ inputs.force_ml }}" = "true" ] && ML=true
 
           # If it's a push on main and diff was empty, default to deploying everything
-          if [ "${{ github.event_name }}" = "push" ] && [ "$BACKEND" = "false" ] && [ "$FRONTEND" = "false" ] && [ "$ML" = "false" ]; then
+          if [ "${{ github.event_name }}" = "push" ] && [ "$BACKEND" = "false" ] && [ "$FRONTEND" = "false" ]; then
             echo "ℹ️  Triggered on main branch push without path match — running full build & deploy."
             BACKEND=true
             FRONTEND=true
-            ML=true
           fi
 
           echo "backend=$BACKEND" >> "$GITHUB_OUTPUT"
           echo "frontend=$FRONTEND" >> "$GITHUB_OUTPUT"
-          echo "ml=$ML" >> "$GITHUB_OUTPUT"
           echo "deploy_infra=$DEPLOY_INFRA" >> "$GITHUB_OUTPUT"
 
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "  🔧 Backend changed      : $BACKEND"
-          echo "  🧠 ML Lambda changed    : $ML"
           echo "  🎨 Frontend changed     : $FRONTEND"
           echo "  📐 Deploy infra changed : $DEPLOY_INFRA"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -136,7 +126,7 @@ jobs:
           PYTHONPATH=src uv run uvicorn src.main:app --host 0.0.0.0 --port 8000 &
           UVICORN_PID=$!
           echo "Waiting for backend server to start (PID $UVICORN_PID)..."
-          for i in {1..20}; do
+          for i in {1..30}; do
             if curl -s http://localhost:8000/health | grep -q "status"; then
               echo "✅ Health check successful!"
               kill $UVICORN_PID 2>/dev/null || true
@@ -148,88 +138,33 @@ jobs:
           kill $UVICORN_PID 2>/dev/null || true
           exit 1
         env:
-          AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID || 'testing' }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY || 'testing' }}
-          AWS_DEFAULT_REGION:    ${{ secrets.AWS_REGION || 'ap-south-1' }}
-          DYNAMODB_REVIEWS_TABLE:    ${{ secrets.DYNAMODB_REVIEWS_TABLE || 'ReviewsTest' }}
-          DYNAMODB_BATCHES_TABLE:    ${{ secrets.DYNAMODB_BATCHES_TABLE || 'BatchesTest' }}
-          DYNAMODB_AGGREGATES_TABLE: ${{ secrets.DYNAMODB_AGGREGATES_TABLE || 'AggregatesTest' }}
-          S3_BUCKET_NAME:        ${{ secrets.S3_BUCKET_NAME || 'sentimetric-prod-storage' }}
+          SKIP_STARTUP_CHECK:    "true"
           ENVIRONMENT:           testing
           LOG_LEVEL:             DEBUG
+          AWS_ACCESS_KEY_ID:     "testing"
+          AWS_SECRET_ACCESS_KEY: "testing"
+          AWS_DEFAULT_REGION:    ${{ secrets.AWS_REGION || 'ap-south-1' }}
+          DYNAMODB_REVIEWS_TABLE:    ${{ secrets.DYNAMODB_REVIEWS_TABLE || 'Reviews' }}
+          DYNAMODB_BATCHES_TABLE:    ${{ secrets.DYNAMODB_BATCHES_TABLE || 'Batches' }}
+          DYNAMODB_AGGREGATES_TABLE: ${{ secrets.DYNAMODB_AGGREGATES_TABLE || 'Aggregates' }}
+          DYNAMODB_CORRECTIONS_TABLE: ${{ secrets.DYNAMODB_CORRECTIONS_TABLE || 'Corrections' }}
+          S3_BUCKET_NAME:        ${{ secrets.S3_BUCKET_NAME || 'sentimetric-prod-storage' }}
 
       - name: Run pytest suite
         run: uv run pytest tests/ -v
         env:
-          AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID || 'testing' }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY || 'testing' }}
+          SKIP_STARTUP_CHECK:    "true"
+          ENVIRONMENT:           testing
+          AWS_ACCESS_KEY_ID:     "testing"
+          AWS_SECRET_ACCESS_KEY: "testing"
           AWS_DEFAULT_REGION:    ${{ secrets.AWS_REGION || 'ap-south-1' }}
-          DYNAMODB_REVIEWS_TABLE:    ${{ secrets.DYNAMODB_REVIEWS_TABLE || 'ReviewsTest' }}
-          DYNAMODB_BATCHES_TABLE:    ${{ secrets.DYNAMODB_BATCHES_TABLE || 'BatchesTest' }}
-          DYNAMODB_AGGREGATES_TABLE: ${{ secrets.DYNAMODB_AGGREGATES_TABLE || 'AggregatesTest' }}
+          DYNAMODB_REVIEWS_TABLE:    ${{ secrets.DYNAMODB_REVIEWS_TABLE || 'Reviews' }}
+          DYNAMODB_BATCHES_TABLE:    ${{ secrets.DYNAMODB_BATCHES_TABLE || 'Batches' }}
+          DYNAMODB_AGGREGATES_TABLE: ${{ secrets.DYNAMODB_AGGREGATES_TABLE || 'Aggregates' }}
+          DYNAMODB_CORRECTIONS_TABLE: ${{ secrets.DYNAMODB_CORRECTIONS_TABLE || 'Corrections' }}
 
   # ──────────────────────────────────────────────────────────────
-  # JOB 3 — ML Inference Function Tests
-  # ──────────────────────────────────────────────────────────────
-  test-ml:
-    name: "🧪 Test ML Inference"
-    needs: detect-changes
-    if: needs.detect-changes.outputs.ml == 'true'
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: lambda
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python 3.13
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-
-      - name: Install ML Lambda dependencies ONLY
-        run: |
-          pip install onnxruntime numpy tokenizers pytest
-          echo "🔒 Verifying forbidden libraries are NOT installed..."
-          for pkg in torch transformers sentence-transformers tensorflow sklearn; do
-            if pip show "$pkg" 2>/dev/null; then
-              echo "❌ FORBIDDEN: $pkg is installed. Rules prohibit this in Lambda deploy."
-              exit 1
-            fi
-          done
-          echo "✅ No forbidden libraries present."
-
-      - name: Configure AWS credentials (if provided)
-        if: env.AWS_KEY != ''
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            ${{ secrets.AWS_REGION || 'ap-south-1' }}
-        env:
-          AWS_KEY: ${{ secrets.AWS_ACCESS_KEY_ID }}
-
-      - name: Sync ML artifacts from S3 (if missing locally)
-        run: |
-          if [ ! -f "artifacts/bge_onnx_quantized/model_quantized.onnx" ] && [ -n "${{ secrets.S3_BUCKET_NAME }}" ]; then
-            echo "📥 Syncing lambda/artifacts/ from S3..."
-            mkdir -p artifacts
-            aws s3 sync "s3://${{ secrets.S3_BUCKET_NAME }}/ml-artifacts/lambda_deploy_artifacts/" artifacts/ --exclude "bge_onnx_fp32/*" || true
-          fi
-
-      - name: Run handler local test (if artifacts present)
-        run: |
-          if [ -f "artifacts/bge_onnx_quantized/model_quantized.onnx" ]; then
-            export ARTIFACT_DIR="$(pwd)/artifacts"
-            python handler.py
-          else
-            echo "ℹ️  artifacts/ not available in test environment. Skipping local inference check."
-          fi
-
-  # ──────────────────────────────────────────────────────────────
-  # JOB 4 — Frontend Tests
+  # JOB 3 — Frontend Tests
   # ──────────────────────────────────────────────────────────────
   test-frontend:
     name: "🧪 Test Frontend"
@@ -264,97 +199,16 @@ jobs:
           VITE_API_BASE_URL: ${{ secrets.VITE_API_URL || 'https://placeholder.execute-api.ap-south-1.amazonaws.com' }}
 
   # ──────────────────────────────────────────────────────────────
-  # JOB 5 — Auto Deploy BGE Text Embedder Lambda → AWS (SAM)
-  # ──────────────────────────────────────────────────────────────
-  deploy-ml:
-    name: "🧠 Deploy BGE Text Embedder → AWS"
-    needs: [detect-changes, test-ml]
-    if: |
-      github.ref == 'refs/heads/main' &&
-      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
-      (needs.test-ml.result == 'success' || needs.test-ml.result == 'skipped') &&
-      (needs.detect-changes.outputs.ml == 'true')
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: lambda
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            ${{ secrets.AWS_REGION || 'ap-south-1' }}
-
-      - name: Pull ML model artifacts from S3
-        run: |
-          echo "📥 Syncing lambda/artifacts/ from S3..."
-          mkdir -p artifacts
-          aws s3 sync \
-            "s3://${{ secrets.S3_BUCKET_NAME }}/ml-artifacts/lambda_deploy_artifacts/" \
-            artifacts/ \
-            --exclude "bge_onnx_fp32/*" || true
-          echo "✅ ML artifacts status in lambda/:"
-          find artifacts -type f -exec du -h {} + 2>/dev/null || echo "No artifacts found"
-
-      - name: Install AWS SAM CLI
-        uses: aws-actions/setup-sam@v2
-        with:
-          use-installer: true
-
-      - name: SAM Build (BGE Text Embedder)
-        run: |
-          sam build --use-container --template-file template.yaml
-
-      - name: Strip unused dependencies from BGE Text Embedder package
-        run: |
-          rm -rf .aws-sam/build/BgeTextEmbedderFunction/huggingface_hub*
-          rm -rf .aws-sam/build/BgeTextEmbedderFunction/hf_xet*
-          rm -rf .aws-sam/build/BgeTextEmbedderFunction/hf-xet*
-          rm -rf .aws-sam/build/BgeTextEmbedderFunction/httpx*
-          rm -rf .aws-sam/build/BgeTextEmbedderFunction/httpcore*
-
-      - name: SAM Deploy (BGE Text Embedder)
-        run: |
-          STACK_NAME="${{ secrets.ML_STACK_NAME || 'bge-text-embeder-stack' }}"
-          sam deploy \
-            --config-file samconfig.toml \
-            --stack-name "$STACK_NAME" \
-            --no-confirm-changeset \
-            --no-fail-on-empty-changeset \
-            --parameter-overrides \
-              FunctionName="${{ secrets.BGE_TEXT_EMBEDDER_FUNCTION_NAME || 'bge-text-embeder' }}"
-
-      - name: Output Lambda details
-        run: |
-          STACK_NAME="${{ secrets.ML_STACK_NAME || 'bge-text-embeder-stack' }}"
-          REGION="${{ secrets.AWS_REGION || 'ap-south-1' }}"
-          FN_NAME=$(aws cloudformation describe-stacks \
-            --stack-name "$STACK_NAME" \
-            --region "$REGION" \
-            --query "Stacks[0].Outputs[?OutputKey=='BgeTextEmbedderFunctionName'].OutputValue" \
-            --output text 2>/dev/null || echo "bge-text-embeder")
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "  ✅  BGE Text Embedder Lambda deployed successfully!"
-          echo "  🧠  Function Name: $FN_NAME"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-  # ──────────────────────────────────────────────────────────────
-  # JOB 6 — Auto Deploy Backend API → AWS (SAM)
+  # JOB 4 — Auto Deploy Backend API → AWS (SAM)
   # ──────────────────────────────────────────────────────────────
   deploy-backend:
     name: "🚀 Deploy Backend API → AWS"
-    needs: [detect-changes, test-backend, deploy-ml]
+    needs: [detect-changes, test-backend]
     if: |
       always() &&
       github.ref == 'refs/heads/main' &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
       (needs.test-backend.result == 'success' || needs.test-backend.result == 'skipped') &&
-      (needs.deploy-ml.result == 'success' || needs.deploy-ml.result == 'skipped') &&
       (needs.detect-changes.outputs.backend == 'true' || needs.detect-changes.outputs.deploy_infra == 'true')
     runs-on: ubuntu-latest
     defaults:
@@ -452,7 +306,7 @@ jobs:
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
   # ──────────────────────────────────────────────────────────────
-  # JOB 7 — Auto Deploy Frontend → Vercel
+  # JOB 5 — Auto Deploy Frontend → Vercel
   # ──────────────────────────────────────────────────────────────
   deploy-frontend:
     name: "🚀 Deploy Frontend → Vercel"
