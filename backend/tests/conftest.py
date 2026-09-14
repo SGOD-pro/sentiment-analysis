@@ -22,6 +22,7 @@ os.environ["AWS_ENDPOINT_URL"] = ""  # clear so moto intercepts (not LocalStack)
 os.environ["DYNAMODB_REVIEWS_TABLE"] = "Reviews"
 os.environ["DYNAMODB_BATCHES_TABLE"] = "Batches"
 os.environ["DYNAMODB_AGGREGATES_TABLE"] = "Aggregates"
+os.environ["DYNAMODB_CORRECTIONS_TABLE"] = "Corrections"
 os.environ["S3_BUCKET_NAME"] = "test-bucket"
 os.environ["ML_INFERENCE_FUNCTION_NAME"] = "test-lambda"
 os.environ["BGE_TEXT_EMBEDDER_FUNCTION_NAME"] = "test-lambda"
@@ -93,6 +94,23 @@ def aws_mock():
             AttributeDefinitions=[
                 {"AttributeName": "batch_id", "AttributeType": "S"},
                 {"AttributeName": "agg_type", "AttributeType": "S"},
+            ],
+            BillingMode="PAY_PER_REQUEST",
+        )
+
+        ddb.create_table(
+            TableName="Corrections",
+            KeySchema=[{"AttributeName": "correction_id", "KeyType": "HASH"}],
+            AttributeDefinitions=[
+                {"AttributeName": "correction_id", "AttributeType": "S"},
+                {"AttributeName": "review_id", "AttributeType": "S"},
+            ],
+            GlobalSecondaryIndexes=[
+                {
+                    "IndexName": "review-corrections-index",
+                    "KeySchema": [{"AttributeName": "review_id", "KeyType": "HASH"}],
+                    "Projection": {"ProjectionType": "ALL"},
+                }
             ],
             BillingMode="PAY_PER_REQUEST",
         )
