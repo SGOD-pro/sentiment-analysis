@@ -39,9 +39,13 @@ Parameters:
   DynamoDBCorrectionsTable:
     Type: String
     Default: Corrections
+  BgeTextEmbedderFunctionName:
+    Type: String
+    Default: bge-text-embeder
+    Description: Name of the dedicated BGE text embedding Lambda function
 
 Resources:
-  # ── FastAPI backend Lambda — routes, DynamoDB, S3, invokes MLInferenceFunction ──
+  # ── FastAPI backend Lambda — routes, DynamoDB, S3, invokes BGE Text Embedder ──
   BackendFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -58,7 +62,8 @@ Resources:
           DYNAMODB_BATCHES_TABLE: !Ref DynamoDBBatchesTable
           DYNAMODB_AGGREGATES_TABLE: !Ref DynamoDBAggregatesTable
           DYNAMODB_CORRECTIONS_TABLE: !Ref DynamoDBCorrectionsTable
-          ML_INFERENCE_FUNCTION_NAME: !Ref MLInferenceFunction
+          BGE_TEXT_EMBEDDER_FUNCTION_NAME: !Ref BgeTextEmbedderFunctionName
+          ML_INFERENCE_FUNCTION_NAME: !Ref BgeTextEmbedderFunctionName
       Policies:
         - S3CrudPolicy:
             BucketName: !Ref S3BucketName
@@ -71,7 +76,7 @@ Resources:
         - DynamoDBCrudPolicy:
             TableName: !Ref DynamoDBCorrectionsTable
         - LambdaInvokePolicy:
-            FunctionName: !Ref MLInferenceFunction
+            FunctionName: !Ref BgeTextEmbedderFunctionName
       Events:
         ApiProxy:
           Type: HttpApi
@@ -86,33 +91,6 @@ Resources:
             Method: ANY
             ApiId: !Ref SentiMetricHttpApi
 
-  # ── ML inference Lambda — ONNX BGE + MLP + KMeans, NO torch/transformers/sklearn ──
-  # Per Rules.md Library Rules: onnxruntime, numpy, tokenizers ONLY.
-  # Package includes bge_onnx_quantized/ (~35MB) - never bge_onnx_fp32.
-  MLInferenceFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      FunctionName: sentimetric-ml-inference
-      Description: BGE ONNX embedding + MLP sentiment + KMeans issue detection
-      CodeUri: ../../lambda/          # points at lambda/ directory, NOT backend/
-      Handler: handler.lambda_handler
-      MemorySize: 512                 # Rules.md ceiling - model + runtime must fit here
-      Timeout: 30
-      # No Events block - this function is invoked directly by BackendFunction,
-      # never exposed via API Gateway. Keeps the ML model out of the public surface.
-
-    ReviewsTable:
-    Type: AWS::DynamoDB::Table
-    Properties:
-      TableName: !Ref DynamoDBReviewsTable
-      BillingMode: PAY_PER_REQUEST
-      AttributeDefinitions:
-        - AttributeName: review_id
-          AttributeType: S
-      KeySchema:
-        - AttributeName: review_id
-          KeyType: HASH
-
   ReviewsTable:
     Type: AWS::DynamoDB::Table
     Properties:
@@ -121,9 +99,42 @@ Resources:
       AttributeDefinitions:
         - AttributeName: review_id
           AttributeType: S
+        - AttributeName: batch_id
+          AttributeType: S
+        - AttributeName: sentiment
+          AttributeType: S
+        - AttributeName: batch_cat_sort
+          AttributeType: S
+        - AttributeName: batch_issue_sort
+          AttributeType: S
       KeySchema:
         - AttributeName: review_id
           KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: batch-sentiment-index
+          KeySchema:
+            - AttributeName: batch_id
+              KeyType: HASH
+            - AttributeName: sentiment
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: batch-category-index
+          KeySchema:
+            - AttributeName: batch_id
+              KeyType: HASH
+            - AttributeName: batch_cat_sort
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: batch-issue-index
+          KeySchema:
+            - AttributeName: batch_id
+              KeyType: HASH
+            - AttributeName: batch_issue_sort
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
 
   BatchesTable:
     Type: AWS::DynamoDB::Table
@@ -145,9 +156,13 @@ Resources:
       AttributeDefinitions:
         - AttributeName: batch_id
           AttributeType: S
+        - AttributeName: agg_type
+          AttributeType: S
       KeySchema:
         - AttributeName: batch_id
           KeyType: HASH
+        - AttributeName: agg_type
+          KeyType: RANGE
 
   CorrectionsTable:
     Type: AWS::DynamoDB::Table
@@ -195,7 +210,5 @@ Outputs:
     Value: !Sub "https://${SentiMetricHttpApi}.execute-api.${AWS::Region}.amazonaws.com"
   BackendFunctionArn:
     Value: !GetAtt BackendFunction.Arn
-  MLInferenceFunctionArn:
-    Value: !GetAtt MLInferenceFunction.Arn
-  MLInferenceFunctionName:
-    Value: !Ref MLInferenceFunction
+  BgeTextEmbedderFunctionName:
+    Value: !Ref BgeTextEmbedderFunctionName

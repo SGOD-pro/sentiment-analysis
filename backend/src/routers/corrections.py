@@ -11,10 +11,9 @@ Example:
     { "manual_label": "positive" }
 """
 
-import uuid
+import hashlib
 from datetime import datetime, timezone
 
-from boto3.dynamodb.conditions import Key
 from fastapi import APIRouter
 from pydantic import BaseModel, field_validator
 
@@ -28,6 +27,24 @@ log = get_logger(__name__)
 router = APIRouter(prefix="/api")
 
 VALID_LABELS = {"positive", "neutral", "negative"}
+
+
+def compute_correction_hash(text: str, original_label: str, manual_label: str) -> str:
+    """
+    Generate deterministic SHA-256 primary key for a human correction:
+    1. Trim whitespace on text, original_label, and manual_label.
+    2. Lowercase all three values.
+    3. Concatenate with colon delimiter.
+    4. Compute SHA-256 hex digest.
+
+    Acts as the primary key ('correction_id') in DynamoDB to eliminate duplicate
+    corrections for identical review text + sentiment transition.
+    """
+    clean_text = (text or "").strip().lower()
+    clean_orig = (original_label or "").strip().lower()
+    clean_manual = (manual_label or "").strip().lower()
+    merged = f"{clean_text}:{clean_orig}:{clean_manual}".encode("utf-8")
+    return hashlib.sha256(merged).hexdigest()
 
 
 class CorrectionRequest(BaseModel):
@@ -48,7 +65,8 @@ def correct_review(review_id: str, body: CorrectionRequest):
     Upsert a human correction for a review.
 
     Looks up the original review, rejects no-ops (manual == original),
-    then writes/overwrites a single Corrections row keyed by review_id.
+    generates a deterministic SHA-256 primary key from (text, original_label, manual_label),
+    and writes/overwrites the Corrections row keyed by that SHA-256 hash.
     Invalidates the Redis cache entries for this batch so the next page
     load reflects the correction flag.
     """
@@ -61,40 +79,27 @@ def correct_review(review_id: str, body: CorrectionRequest):
         return ApiResponse(success=False, error_code="NOT_FOUND", message="Review not found")
 
     original_label = review["sentiment"]
-    if body.manual_label == original_label:
+    if body.manual_label.strip().lower() == original_label.strip().lower():
         return ApiResponse(success=False, error_code="NO_OP", message="manual_label matches current label — nothing to correct")
 
-    # Check if a correction already exists for this review AND session (upsert per session)
-    existing = tables.corrections.query(
-        IndexName="review-corrections-index",
-        KeyConditionExpression=Key("review_id").eq(review_id),
-    )
-    existing_items = existing.get("Items", [])
-
-    matching_item = None
-    if body.session_id:
-        for item in existing_items:
-            if item.get("correction_source_session_id") == body.session_id:
-                matching_item = item
-                break
-    elif existing_items:
-        matching_item = existing_items[0]
-
-    correction_id = matching_item["correction_id"] if matching_item else str(uuid.uuid4())
+    raw_text = review.get("text", "")
+    # Deterministic SHA-256 primary key: guarantees absolute deduplication
+    correction_id = compute_correction_hash(raw_text, original_label, body.manual_label)
 
     # Note: confidence_margin is taken from the original review object (Reviews table)
     # and is NEVER overwritten or modified by human corrections.
     correction = {
         "correction_id": correction_id,
         "review_id": review_id,
-        "batch_id": review["batch_id"],
-        "text": review.get("text", ""),
+        "batch_id": review.get("batch_id", ""),
+        "text": raw_text,
         "label": original_label,
         "manual_label": body.manual_label,
         "date": datetime.now(timezone.utc).isoformat(),
-        "correction_source_session_id": body.session_id,
-        "confidence_margin": review.get("confidence_margin", "0"),
+        "correction_source_session_id": body.session_id or review.get("batch_id", ""),
+        "confidence_margin": str(review.get("confidence_margin", "0")),
     }
+    # Direct put_item with SHA-256 primary key updates/deduplicates in-place in DynamoDB
     tables.corrections.put_item(Item=correction)
 
     # Invalidate all cached review pages for this batch so correction flag
@@ -115,10 +120,24 @@ def get_admin_corrections(format: str | None = None):
 
     # Full scan of corrections
     response = tables.corrections.scan()
-    items = response.get("Items", [])
+    raw_items = response.get("Items", [])
     while "LastEvaluatedKey" in response:
         response = tables.corrections.scan(ExclusiveStartKey=response["LastEvaluatedKey"])
-        items.extend(response.get("Items", []))
+        raw_items.extend(response.get("Items", []))
+
+    # Deduplicate records by SHA-256 hash of (text, label, manual_label) keeping the newest record
+    deduped = {}
+    for item in raw_items:
+        c_hash = compute_correction_hash(
+            item.get("text", ""),
+            item.get("label", ""),
+            item.get("manual_label", ""),
+        )
+        item["correction_id"] = c_hash
+        if c_hash not in deduped or (item.get("date", "") > deduped[c_hash].get("date", "")):
+            deduped[c_hash] = item
+
+    items = sorted(deduped.values(), key=lambda x: x.get("date", ""), reverse=True)
 
     # Fetch confidence_margin and category from Reviews table in chunks of 100
     review_ids = list({item["review_id"] for item in items})

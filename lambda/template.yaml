@@ -1,0 +1,46 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  BGE Text Embedder Microservice — High-throughput 384-dimensional text embeddings
+  using quantized BGE ONNX model and multi-core ThreadPool micro-batching.
+
+Globals:
+  Function:
+    Runtime: python3.13
+    Timeout: 30
+    MemorySize: 512
+    Architectures:
+      - x86_64
+    Environment:
+      Variables:
+        ENVIRONMENT: production
+        LOG_LEVEL: INFO
+
+Parameters:
+  FunctionName:
+    Type: String
+    Default: bge-text-embeder
+    Description: Name of the Lambda function
+
+Resources:
+  BgeTextEmbedderFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Ref FunctionName
+      Description: BGE ONNX text embedding generator with cold start optimization and ThreadPool micro-batching
+      CodeUri: ./
+      Handler: handler.lambda_handler
+      MemorySize: 512
+      Timeout: 30
+
+Outputs:
+  BgeTextEmbedderFunctionName:
+    Description: Name of the BGE Text Embedder Lambda function
+    Value: !Ref BgeTextEmbedderFunction
+    Export:
+      Name: !Sub "${AWS::StackName}-FunctionName"
+  BgeTextEmbedderFunctionArn:
+    Description: ARN of the BGE Text Embedder Lambda function
+    Value: !GetAtt BgeTextEmbedderFunction.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-FunctionArn"

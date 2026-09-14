@@ -24,6 +24,8 @@ os.environ["DYNAMODB_BATCHES_TABLE"] = "Batches"
 os.environ["DYNAMODB_AGGREGATES_TABLE"] = "Aggregates"
 os.environ["S3_BUCKET_NAME"] = "test-bucket"
 os.environ["ML_INFERENCE_FUNCTION_NAME"] = "test-lambda"
+os.environ["BGE_TEXT_EMBEDDER_FUNCTION_NAME"] = "test-lambda"
+os.environ["LAMBDA_FUNCTION_NAME"] = "test-lambda"
 os.environ["DEBUG"] = "true"
 
 

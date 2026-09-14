@@ -39,7 +39,7 @@ def _seed_batch(aws_mock, batch_id="test-batch-1", csv_content=None, column_mapp
     return batch_id
 
 
-def _fake_invoke(texts):
+def _fake_invoke(texts, *args, **kwargs):
     """Build fake Lambda results for a list of texts."""
     results = []
     for t in texts:
@@ -110,7 +110,7 @@ def test_lambda_timeout_partial_recovery(aws_mock):
 
     call_count = 0
 
-    def _invoke_with_failure(texts):
+    def _invoke_with_failure(texts, *args, **kwargs):
         nonlocal call_count
         call_count += 1
         if call_count == 1:

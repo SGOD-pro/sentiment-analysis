@@ -165,12 +165,12 @@ API Gateway  ◄── CORS configured HERE, only here
    ▼
 BackendFunction (Lambda, Mangum + FastAPI, 256MB, no ML libraries loaded)
    │
-   │  boto3.client("lambda").invoke(FunctionName="sentimetric-ml-inference")
+   │  boto3.client("lambda").invoke(FunctionName="bge-text-embeder")
    │  Server-side AWS SDK call. NOT HTTP. NOT a URL. Resolved by function
    │  name, authorized by IAM role (LambdaInvokePolicy), synchronous
    │  (InvocationType="RequestResponse").
    ▼
-MLInferenceFunction (Lambda, ONNX+MLP+KMeans, 512MB)
+BgeTextEmbedderFunction (Lambda, ONNX BGE embedding generator, 512MB)
    │  No API Gateway route. No public URL. No CORS. Cannot be called
    │  from a browser, cannot be called from outside AWS at all except
    │  by an IAM principal with lambda:InvokeFunction on this specific ARN.

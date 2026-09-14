@@ -1,0 +1,18 @@
+version = 0.1
+
+[default.deploy.parameters]
+stack_name = "bge-text-embeder-stack"
+region = "ap-south-1"
+confirm_changeset = false
+capabilities = "CAPABILITY_IAM"
+resolve_s3 = true
+disable_rollback = false
+s3_prefix = "bge-text-embeder"
+
+[default.build.parameters]
+use_container = true
+cached = true
+parallel = true
+
+[default.global.parameters]
+region = "ap-south-1"

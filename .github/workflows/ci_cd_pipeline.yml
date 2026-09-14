@@ -72,8 +72,8 @@ jobs:
           echo "$CHANGED" | grep -qE "^lambda/" && ML=true
           echo "$CHANGED" | grep -qE "^backend/deploy/" && DEPLOY_INFRA=true
 
-          # If deploy template/samconfig changed, redeploy both backend and ML
-          [ "$DEPLOY_INFRA" = "true" ] && BACKEND=true && ML=true
+          # If deploy template/samconfig changed, redeploy backend
+          [ "$DEPLOY_INFRA" = "true" ] && BACKEND=true
 
           # Manual force overrides
           [ "${{ inputs.force_backend }}" = "true" ] && BACKEND=true
@@ -264,17 +264,98 @@ jobs:
           VITE_API_BASE_URL: ${{ secrets.VITE_API_URL || 'https://placeholder.execute-api.ap-south-1.amazonaws.com' }}
 
   # ──────────────────────────────────────────────────────────────
-  # JOB 5 — Auto Deploy Backend + ML Lambda → AWS (SAM)
+  # JOB 5 — Auto Deploy BGE Text Embedder Lambda → AWS (SAM)
   # ──────────────────────────────────────────────────────────────
-  deploy-backend:
-    name: "🚀 Deploy Backend + ML Lambda → AWS"
-    needs: [detect-changes, test-backend, test-ml]
+  deploy-ml:
+    name: "🧠 Deploy BGE Text Embedder → AWS"
+    needs: [detect-changes, test-ml]
     if: |
       github.ref == 'refs/heads/main' &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
-      (needs.test-backend.result == 'success' || needs.test-backend.result == 'skipped') &&
       (needs.test-ml.result == 'success' || needs.test-ml.result == 'skipped') &&
-      (needs.detect-changes.outputs.backend == 'true' || needs.detect-changes.outputs.ml == 'true')
+      (needs.detect-changes.outputs.ml == 'true')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: lambda
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ secrets.AWS_REGION || 'ap-south-1' }}
+
+      - name: Pull ML model artifacts from S3
+        run: |
+          echo "📥 Syncing lambda/artifacts/ from S3..."
+          mkdir -p artifacts
+          aws s3 sync \
+            "s3://${{ secrets.S3_BUCKET_NAME }}/ml-artifacts/lambda_deploy_artifacts/" \
+            artifacts/ \
+            --exclude "bge_onnx_fp32/*" || true
+          echo "✅ ML artifacts status in lambda/:"
+          find artifacts -type f -exec du -h {} + 2>/dev/null || echo "No artifacts found"
+
+      - name: Install AWS SAM CLI
+        uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+
+      - name: SAM Build (BGE Text Embedder)
+        run: |
+          sam build --use-container --template-file template.yaml
+
+      - name: Strip unused dependencies from BGE Text Embedder package
+        run: |
+          rm -rf .aws-sam/build/BgeTextEmbedderFunction/huggingface_hub*
+          rm -rf .aws-sam/build/BgeTextEmbedderFunction/hf_xet*
+          rm -rf .aws-sam/build/BgeTextEmbedderFunction/hf-xet*
+          rm -rf .aws-sam/build/BgeTextEmbedderFunction/httpx*
+          rm -rf .aws-sam/build/BgeTextEmbedderFunction/httpcore*
+
+      - name: SAM Deploy (BGE Text Embedder)
+        run: |
+          STACK_NAME="${{ secrets.ML_STACK_NAME || 'bge-text-embeder-stack' }}"
+          sam deploy \
+            --config-file samconfig.toml \
+            --stack-name "$STACK_NAME" \
+            --no-confirm-changeset \
+            --no-fail-on-empty-changeset \
+            --parameter-overrides \
+              FunctionName="${{ secrets.BGE_TEXT_EMBEDDER_FUNCTION_NAME || 'bge-text-embeder' }}"
+
+      - name: Output Lambda details
+        run: |
+          STACK_NAME="${{ secrets.ML_STACK_NAME || 'bge-text-embeder-stack' }}"
+          REGION="${{ secrets.AWS_REGION || 'ap-south-1' }}"
+          FN_NAME=$(aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --region "$REGION" \
+            --query "Stacks[0].Outputs[?OutputKey=='BgeTextEmbedderFunctionName'].OutputValue" \
+            --output text 2>/dev/null || echo "bge-text-embeder")
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  ✅  BGE Text Embedder Lambda deployed successfully!"
+          echo "  🧠  Function Name: $FN_NAME"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  # ──────────────────────────────────────────────────────────────
+  # JOB 6 — Auto Deploy Backend API → AWS (SAM)
+  # ──────────────────────────────────────────────────────────────
+  deploy-backend:
+    name: "🚀 Deploy Backend API → AWS"
+    needs: [detect-changes, test-backend, deploy-ml]
+    if: |
+      always() &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      (needs.test-backend.result == 'success' || needs.test-backend.result == 'skipped') &&
+      (needs.deploy-ml.result == 'success' || needs.deploy-ml.result == 'skipped') &&
+      (needs.detect-changes.outputs.backend == 'true' || needs.detect-changes.outputs.deploy_infra == 'true')
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -291,16 +372,15 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            ${{ secrets.AWS_REGION || 'ap-south-1' }}
 
-      - name: Pull ML model artifacts from S3
+      - name: Pull lightweight ML weights from S3
         run: |
-          echo "📥 Syncing lambda/artifacts/ from S3..."
-          mkdir -p ../lambda/artifacts
-          aws s3 sync \
-            "s3://${{ secrets.S3_BUCKET_NAME }}/ml-artifacts/lambda_deploy_artifacts/" \
-            ../lambda/artifacts/ \
-            --exclude "bge_onnx_fp32/*" || true
-          echo "✅ ML artifacts status:"
-          find ../lambda/artifacts -type f -exec du -h {} + 2>/dev/null || echo "No artifacts in lambda/artifacts"
+          echo "📥 Updating backend/src/artifacts/..."
+          mkdir -p src/artifacts
+          aws s3 cp "s3://${{ secrets.S3_BUCKET_NAME }}/ml-artifacts/lambda_deploy_artifacts/mlp_weights.npz" src/artifacts/ || true
+          aws s3 cp "s3://${{ secrets.S3_BUCKET_NAME }}/ml-artifacts/lambda_deploy_artifacts/issue_centroids.npy" src/artifacts/ || true
+          aws s3 cp "s3://${{ secrets.S3_BUCKET_NAME }}/ml-artifacts/lambda_deploy_artifacts/config.json" src/artifacts/ || true
+          echo "✅ Backend artifacts status:"
+          find src/artifacts -type f -exec du -h {} + 2>/dev/null || echo "No artifacts found"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -324,34 +404,17 @@ jobs:
           uv export --no-dev --format requirements-txt --no-hashes -o requirements.txt
           cp requirements.txt deploy/requirements.txt
 
-      - name: Generate ML Lambda requirements.txt
-        run: |
-          cat > ../lambda/requirements.txt << 'EOF'
-          onnxruntime
-          numpy
-          tokenizers
-          EOF
-
       - name: Install AWS SAM CLI
         uses: aws-actions/setup-sam@v2
         with:
           use-installer: true
 
-      - name: SAM Build (both functions)
+      - name: SAM Build (Backend API)
         working-directory: backend/deploy
         run: |
           sam build --use-container --template-file template.yaml
 
-      - name: Strip unused dependencies from ML Inference package
-        working-directory: backend/deploy
-        run: |
-          rm -rf .aws-sam/build/MLInferenceFunction/huggingface_hub*
-          rm -rf .aws-sam/build/MLInferenceFunction/hf_xet*
-          rm -rf .aws-sam/build/MLInferenceFunction/hf-xet*
-          rm -rf .aws-sam/build/MLInferenceFunction/httpx*
-          rm -rf .aws-sam/build/MLInferenceFunction/httpcore*
-
-      - name: SAM Deploy
+      - name: SAM Deploy (Backend API)
         working-directory: backend/deploy
         run: |
           STACK_NAME="${{ secrets.CLOUDFORMATION_STACK_NAME || 'sentrix' }}"
@@ -365,7 +428,9 @@ jobs:
               S3BucketName="${{ secrets.S3_BUCKET_NAME || 'sentimetric-prod-storage' }}" \
               DynamoDBReviewsTable="${{ secrets.DYNAMODB_REVIEWS_TABLE || 'Reviews' }}" \
               DynamoDBBatchesTable="${{ secrets.DYNAMODB_BATCHES_TABLE || 'Batches' }}" \
-              DynamoDBAggregatesTable="${{ secrets.DYNAMODB_AGGREGATES_TABLE || 'Aggregates' }}"
+              DynamoDBAggregatesTable="${{ secrets.DYNAMODB_AGGREGATES_TABLE || 'Aggregates' }}" \
+              DynamoDBCorrectionsTable="${{ secrets.DYNAMODB_CORRECTIONS_TABLE || 'Corrections' }}" \
+              BgeTextEmbedderFunctionName="${{ secrets.BGE_TEXT_EMBEDDER_FUNCTION_NAME || 'bge-text-embeder' }}"
 
       - name: Output API Gateway URL
         id: api-info
@@ -381,13 +446,13 @@ jobs:
 
           echo "api_url=$API_URL" >> "$GITHUB_OUTPUT"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "  ✅  Backend + ML Lambda deployed successfully!"
+          echo "  ✅  Backend API deployed successfully!"
           echo "  🌐  API Gateway URL : $API_URL"
           echo "  📋  Health check    : $API_URL/health"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
   # ──────────────────────────────────────────────────────────────
-  # JOB 6 — Auto Deploy Frontend → Vercel
+  # JOB 7 — Auto Deploy Frontend → Vercel
   # ──────────────────────────────────────────────────────────────
   deploy-frontend:
     name: "🚀 Deploy Frontend → Vercel"

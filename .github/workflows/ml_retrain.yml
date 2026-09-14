@@ -183,8 +183,8 @@ jobs:
           echo "✅ Uploaded."
 
       # ── 11b. Trigger main CI/CD pipeline deploy-backend job ───────────────────
-      # Uses workflow_dispatch with force_ml=true so the existing pipeline picks
-      # up the updated mlp_weights.npz from S3 and redeploys MLInferenceFunction.
+      # Uses workflow_dispatch with force_backend=true & force_ml=true so the existing
+      # pipeline picks up updated artifacts and redeploys the backend API.
       - name: Trigger Auto Deploy via ci_cd_pipeline.yml
         if: steps.model_changed.outputs.changed == 'true'
         run: |
@@ -192,7 +192,7 @@ jobs:
             -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             -H "Accept: application/vnd.github.v3+json" \
             https://api.github.com/repos/${{ github.repository }}/actions/workflows/ci_cd_pipeline.yml/dispatches \
-            -d '{"ref":"main","inputs":{"force_ml":"true"}}'
+            -d '{"ref":"main","inputs":{"force_backend":"true","force_ml":"true"}}'
           echo ""
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "  ✅ Model improved. New mlp_weights.npz uploaded to S3."

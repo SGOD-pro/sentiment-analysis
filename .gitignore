@@ -3,5 +3,9 @@
 
 node_modules
 artifacts
+!backend/src/artifacts/
 
 .env
+.aws-sam
+.pytest_cache
+__pycache__

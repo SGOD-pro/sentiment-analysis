@@ -1,0 +1,42 @@
+{
+  "sentiment": {
+    "positive_margin_threshold": 0.3,
+    "negative_margin_threshold": 0.0,
+    "label_names": [
+      "negative",
+      "neutral",
+      "positive"
+    ],
+    "negative_class_id": 0,
+    "neutral_class_id": 1,
+    "positive_class_id": 2,
+    "mlp_architecture": {
+      "input_dim": 384,
+      "hidden1": 256,
+      "hidden2": 128,
+      "n_classes": 3
+    }
+  },
+  "issue_detection": {
+    "cluster_names": {
+      "0": "sizing_and_fit",
+      "1": "audio_and_music_quality",
+      "2": "food_taste_and_pet",
+      "3": "software_and_app_issues",
+      "4": "content_quality",
+      "5": "color_and_appearance",
+      "6": "other",
+      "7": "product_malfunction",
+      "8": "general_dissatisfaction",
+      "9": "value_and_price",
+      "10": "durability_and_build",
+      "11": "other",
+      "12": "scent_and_smell",
+      "13": "order_and_fulfillment",
+      "14": "breakage_and_damage"
+    },
+    "distance_threshold": 0.7,
+    "only_runs_on_sentiment": "negative",
+    "fallback_label": "other"
+  }
+}

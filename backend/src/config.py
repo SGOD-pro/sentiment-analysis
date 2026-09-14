@@ -13,7 +13,7 @@ Example:
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings
 
 
@@ -53,8 +53,12 @@ class Settings(BaseSettings):
     )
 
     lambda_function_name: str = Field(
-        default="sentimetric-ml-inference",
-        validation_alias="ML_INFERENCE_FUNCTION_NAME",
+        default="bge-text-embeder",
+        validation_alias=AliasChoices(
+            "ML_INFERENCE_FUNCTION_NAME",
+            "BGE_TEXT_EMBEDDER_FUNCTION_NAME",
+            "LAMBDA_FUNCTION_NAME",
+        ),
     )
     lambda_batch_size: int = 20
 

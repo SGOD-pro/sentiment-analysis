@@ -40,9 +40,16 @@ Parameters:
   DynamoDBAggregatesTable:
     Type: String
     Default: Aggregates
+  DynamoDBCorrectionsTable:
+    Type: String
+    Default: Corrections
+  BgeTextEmbedderFunctionName:
+    Type: String
+    Default: bge-text-embeder
+    Description: Name of the dedicated BGE text embedding Lambda function
 
 Resources:
-  # ── FastAPI backend Lambda — routes, DynamoDB, S3, invokes MLInferenceFunction ──
+  # ── FastAPI backend Lambda — routes, DynamoDB, S3, invokes BGE Text Embedder ──
   BackendFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -58,7 +65,9 @@ Resources:
           DYNAMODB_REVIEWS_TABLE: !Ref DynamoDBReviewsTable
           DYNAMODB_BATCHES_TABLE: !Ref DynamoDBBatchesTable
           DYNAMODB_AGGREGATES_TABLE: !Ref DynamoDBAggregatesTable
-          ML_INFERENCE_FUNCTION_NAME: !Ref MLInferenceFunction
+          DYNAMODB_CORRECTIONS_TABLE: !Ref DynamoDBCorrectionsTable
+          BGE_TEXT_EMBEDDER_FUNCTION_NAME: !Ref BgeTextEmbedderFunctionName
+          ML_INFERENCE_FUNCTION_NAME: !Ref BgeTextEmbedderFunctionName
       Policies:
         - S3CrudPolicy:
             BucketName: !Ref S3BucketName
@@ -68,8 +77,10 @@ Resources:
             TableName: !Ref DynamoDBBatchesTable
         - DynamoDBCrudPolicy:
             TableName: !Ref DynamoDBAggregatesTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref DynamoDBCorrectionsTable
         - LambdaInvokePolicy:
-            FunctionName: !Ref MLInferenceFunction
+            FunctionName: !Ref BgeTextEmbedderFunctionName
         - Statement:
             - Effect: Allow
               Action:
@@ -78,7 +89,8 @@ Resources:
             - Effect: Allow
               Action:
                 - lambda:GetFunction
-              Resource: !GetAtt MLInferenceFunction.Arn
+                - lambda:InvokeFunction
+              Resource: !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${BgeTextEmbedderFunctionName}"
             - Effect: Allow
               Action:
                 - lambda:InvokeFunction
@@ -96,21 +108,6 @@ Resources:
             Path: /
             Method: ANY
             ApiId: !Ref SentiMetricHttpApi
-
-  # ── ML inference Lambda — ONNX BGE + MLP + KMeans, NO torch/transformers/sklearn ──
-  # Per Rules.md Library Rules: onnxruntime, numpy, tokenizers ONLY.
-  # Package includes bge_onnx_quantized/ (~35MB) - never bge_onnx_fp32.
-  MLInferenceFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      FunctionName: sentimetric-ml-inference
-      Description: BGE ONNX embedding + MLP sentiment + KMeans issue detection
-      CodeUri: ../../lambda/          # points at lambda/ directory, NOT backend/
-      Handler: handler.lambda_handler
-      MemorySize: 512                 # Rules.md ceiling - model + runtime must fit here
-      Timeout: 30
-      # No Events block - this function is invoked directly by BackendFunction,
-      # never exposed via API Gateway. Keeps the ML model out of the public surface.
 
 
   ReviewsTable:
@@ -185,6 +182,27 @@ Resources:
           KeyType: HASH
         - AttributeName: agg_type
           KeyType: RANGE
+
+  CorrectionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Ref DynamoDBCorrectionsTable
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: correction_id
+          AttributeType: S
+        - AttributeName: review_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: correction_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: review-corrections-index
+          KeySchema:
+            - AttributeName: review_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
   # ── API Gateway HTTP API (v2) ────────────────────────────────────────────
   SentiMetricHttpApi:
     Type: AWS::Serverless::HttpApi
@@ -210,7 +228,5 @@ Outputs:
     Value: !Sub "https://${SentiMetricHttpApi}.execute-api.${AWS::Region}.amazonaws.com"
   BackendFunctionArn:
     Value: !GetAtt BackendFunction.Arn
-  MLInferenceFunctionArn:
-    Value: !GetAtt MLInferenceFunction.Arn
-  MLInferenceFunctionName:
-    Value: !Ref MLInferenceFunction
+  BgeTextEmbedderFunctionName:
+    Value: !Ref BgeTextEmbedderFunctionName

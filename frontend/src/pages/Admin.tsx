@@ -233,7 +233,7 @@ function AdminDashboard() {
                     <SortButton col="manual_label" current={sortKey} dir={sortDir} onSort={handleSort} />
                   </th>
                   <th className="text-left px-4 py-3 font-medium text-muted-foreground">Category</th>
-                  <th className="text-left px-4 py-3 font-medium text-muted-foreground">Batch ID</th>
+                  <th className="text-left px-4 py-3 font-medium text-muted-foreground">SHA-256 Key</th>
                   <th className="text-left px-4 py-3 font-medium text-muted-foreground">Review ID</th>
                   <th className="text-left px-4 py-3 font-medium text-muted-foreground">Confidence</th>
                 </tr>
@@ -269,8 +269,8 @@ function AdminDashboard() {
                     <td className="px-4 py-3"><Badge label={row.label} /></td>
                     <td className="px-4 py-3"><Badge label={row.manual_label} /></td>
                     <td className="px-4 py-3 text-muted-foreground">{row.category ?? "—"}</td>
-                    <td className="px-4 py-3 font-mono text-xs text-muted-foreground truncate max-w-[8rem]" title={row.batch_id}>
-                      {row.batch_id}
+                    <td className="px-4 py-3 font-mono text-xs text-muted-foreground truncate max-w-[8rem]" title={row.correction_id}>
+                      {row.correction_id ? `${row.correction_id.slice(0, 10)}…` : "—"}
                     </td>
                     <td className="px-4 py-3 font-mono text-xs text-muted-foreground truncate max-w-[8rem]" title={row.review_id}>
                       {row.review_id}
