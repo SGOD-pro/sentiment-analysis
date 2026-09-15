@@ -42,7 +42,10 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Run startup checks before the server starts accepting requests."""
-    run_aws_startup_checks()
+    try:
+        run_aws_startup_checks()
+    except Exception as exc:
+        log.error("Startup checks error, continuing startup", extra={"error": str(exc)}, exc_info=True)
     yield
 
 

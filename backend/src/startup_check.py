@@ -247,26 +247,29 @@ def run_aws_startup_checks() -> None:
     Run all AWS connectivity and resource checks.
     Called once at server startup. Never raises — logs and continues.
     """
-    settings = get_settings()
-    if os.getenv("SKIP_STARTUP_CHECK", "false").lower() in ("true", "1") or settings.environment == "testing":
-        log.info("AWS startup check — skipped (SKIP_STARTUP_CHECK=true or ENVIRONMENT=testing)")
-        return
+    try:
+        settings = get_settings()
+        if os.getenv("SKIP_STARTUP_CHECK", "false").lower() in ("true", "1") or getattr(settings, "environment", "").lower() == "testing":
+            log.info("AWS startup check — skipped (SKIP_STARTUP_CHECK=true or ENVIRONMENT=testing)")
+            return
 
-    log.info(
-        "AWS startup check — begin",
-        extra={
-            "region": settings.aws_region,
-            "endpoint": settings.aws_endpoint_url or "AWS (public)",
-            "dynamodb_tables": [
-                settings.dynamodb_reviews_table,
-                settings.dynamodb_batches_table,
-                settings.dynamodb_aggregates_table,
-                settings.dynamodb_corrections_table,
-            ],
-            "s3_bucket": settings.s3_bucket,
-        },
-    )
-    _check_dynamodb(settings)
-    _check_s3(settings)
-    _check_lambda(settings)
-    log.info("AWS startup check — done")
+        log.info(
+            "AWS startup check — begin",
+            extra={
+                "region": settings.aws_region,
+                "endpoint": settings.aws_endpoint_url or "AWS (public)",
+                "dynamodb_tables": [
+                    settings.dynamodb_reviews_table,
+                    settings.dynamodb_batches_table,
+                    settings.dynamodb_aggregates_table,
+                    settings.dynamodb_corrections_table,
+                ],
+                "s3_bucket": settings.s3_bucket,
+            },
+        )
+        _check_dynamodb(settings)
+        _check_s3(settings)
+        _check_lambda(settings)
+        log.info("AWS startup check — done")
+    except Exception as exc:
+        log.error("AWS startup check failed, continuing startup", extra={"error": str(exc)}, exc_info=True)

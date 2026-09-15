@@ -37,6 +37,7 @@ class Settings(BaseSettings):
         validation_alias="DYNAMODB_BATCHES_TABLE",
     )
 
+
     dynamodb_aggregates_table: str = Field(
         default="Aggregates",
         validation_alias="DYNAMODB_AGGREGATES_TABLE",
@@ -70,6 +71,7 @@ class Settings(BaseSettings):
 
     # App
     app_name: str = "SWYRA Review Analytics API"
+    environment: str = Field(default="production", validation_alias="ENVIRONMENT")
     debug: bool = False
     reset_data_enabled: bool = False
 
