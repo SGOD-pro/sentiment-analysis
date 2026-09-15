@@ -299,7 +299,7 @@ jobs:
             --no-confirm-changeset \
             --no-fail-on-empty-changeset \
             --parameter-overrides \
-              FrontendOrigin="${{ secrets.FRONTEND_URL || 'https://sentrix.swyra.com' }}" \
+              FrontendOrigin="${{ secrets.FRONTEND_URL || 'https://sentiment-analysis-peach-eta.vercel.app' }}" \
               S3BucketName="${{ secrets.S3_BUCKET_NAME || 'sentimetric-prod-storage' }}" \
               DynamoDBReviewsTable="${{ secrets.DYNAMODB_REVIEWS_TABLE || 'Reviews' }}" \
               DynamoDBBatchesTable="${{ secrets.DYNAMODB_BATCHES_TABLE || 'Batches' }}" \

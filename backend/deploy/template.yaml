@@ -25,7 +25,7 @@ Globals:
 Parameters:
   FrontendOrigin:
     Type: String
-    Default: "http://localhost:5173"
+    Default: "https://sentiment-analysis-peach-eta.vercel.app"
     Description: Frontend origin URL for CORS
   S3BucketName:
     Type: String
@@ -61,6 +61,8 @@ Resources:
       Timeout: 30
       Environment:
         Variables:
+          FRONTEND_URL: !Ref FrontendOrigin
+          FRONTEND_ORIGIN: !Ref FrontendOrigin
           S3_BUCKET_NAME: !Ref S3BucketName
           DYNAMODB_REVIEWS_TABLE: !Ref DynamoDBReviewsTable
           DYNAMODB_BATCHES_TABLE: !Ref DynamoDBBatchesTable
@@ -218,9 +220,7 @@ Resources:
           - PATCH
           - OPTIONS
         AllowHeaders:
-          - Content-Type
-          - Authorization
-          - X-Requested-With
+          - "*"
 
 Outputs:
   ApiUrl:

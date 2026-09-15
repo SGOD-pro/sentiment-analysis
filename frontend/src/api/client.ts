@@ -10,7 +10,8 @@ import type {
   TrendWeek,
 } from "../types";
 
-const BASE = import.meta.env.VITE_API_URL ?? import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+const RAW_BASE = import.meta.env.VITE_API_URL ?? import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+const BASE = RAW_BASE.replace(/\/+$/, "");
 
 async function request<T>(path: string, init?: RequestInit): Promise<ApiResponse<T>> {
   const res = await fetch(`${BASE}${path}`, init);

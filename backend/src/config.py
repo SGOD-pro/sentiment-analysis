@@ -72,8 +72,33 @@ class Settings(BaseSettings):
     # App
     app_name: str = "SWYRA Review Analytics API"
     environment: str = Field(default="production", validation_alias="ENVIRONMENT")
+    frontend_url: str = Field(
+        default="http://localhost:5173",
+        validation_alias=AliasChoices("FRONTEND_URL", "FRONTEND_ORIGIN"),
+    )
     debug: bool = False
     reset_data_enabled: bool = False
+
+    @property
+    def allowed_origins(self) -> list[str]:
+        if self.environment == "production":
+            # In production: strictly allow only configured frontend URL from env (no localhost)
+            origins = []
+            if self.frontend_url:
+                for url in self.frontend_url.split(","):
+                    clean = url.strip().rstrip("/")
+                    if clean and clean not in origins:
+                        origins.append(clean)
+            return origins if origins else ["https://sentiment-analysis-peach-eta.vercel.app"]
+        else:
+            # In development: allow local dev servers
+            origins = ["http://localhost:5173", "http://localhost:5174"]
+            if self.frontend_url:
+                for url in self.frontend_url.split(","):
+                    clean = url.strip().rstrip("/")
+                    if clean and clean not in origins:
+                        origins.append(clean)
+            return origins
 
 
 @lru_cache
