@@ -263,6 +263,27 @@ jobs:
         with:
           use-installer: true
 
+      - name: Backup current Lambda deployment package (for rollback)
+        id: backup
+        run: |
+          REGION="${{ secrets.AWS_REGION || 'ap-south-1' }}"
+          FN_NAME="sentimetric-backend-api"
+          CODE_URL=$(aws lambda get-function --function-name "$FN_NAME" --region "$REGION" --query "Code.Location" --output text 2>/dev/null || echo "")
+          if [ -n "$CODE_URL" ] && [ "$CODE_URL" != "None" ]; then
+            echo "📦 Downloading active Lambda package for instant rollback..."
+            curl -s -o /tmp/sentimetric_backup.zip "$CODE_URL"
+            if [ -s /tmp/sentimetric_backup.zip ]; then
+              echo "has_backup=true" >> "$GITHUB_OUTPUT"
+              echo "✅ Previous working Lambda code package backed up ($(du -h /tmp/sentimetric_backup.zip | cut -f1))."
+            else
+              echo "has_backup=false" >> "$GITHUB_OUTPUT"
+              echo "⚠️ Could not save backup zip."
+            fi
+          else
+            echo "has_backup=false" >> "$GITHUB_OUTPUT"
+            echo "ℹ️ Function does not exist yet or no code location returned."
+          fi
+
       - name: SAM Build (Backend API)
         working-directory: backend/deploy
         run: |
@@ -303,6 +324,83 @@ jobs:
           echo "  ✅  Backend API deployed successfully!"
           echo "  🌐  API Gateway URL : $API_URL"
           echo "  📋  Health check    : $API_URL/health"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+      - name: Post-Deployment Smoke Test & Automated Rollback
+        run: |
+          API_URL="${{ steps.api-info.outputs.api_url }}"
+          REGION="${{ secrets.AWS_REGION || 'ap-south-1' }}"
+          FN_NAME="sentimetric-backend-api"
+          HAS_BACKUP="${{ steps.backup.outputs.has_backup }}"
+
+          if [ -z "$API_URL" ] || [ "$API_URL" = "None" ]; then
+            echo "❌ No API Gateway URL found from CloudFormation stack."
+            exit 1
+          fi
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🔍 Post-Deployment Smoke Test Initiated"
+          echo "   Target URL: $API_URL"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          SMOKE_PASSED=false
+
+          # Test 1: Health check (/health) with retry loop for cold starts
+          echo "👉 Checking /health endpoint..."
+          for i in {1..8}; do
+            HTTP_STATUS=$(curl -s -o /tmp/health_response.json -w "%{http_code}" "$API_URL/health" || echo "000")
+            echo "   Attempt $i: HTTP $HTTP_STATUS"
+            if [ "$HTTP_STATUS" = "200" ] && grep -q "healthy" /tmp/health_response.json 2>/dev/null; then
+              echo "   ✅ /health responded 200 OK: $(cat /tmp/health_response.json)"
+              SMOKE_PASSED=true
+              break
+            fi
+            echo "   ⏳ Health check attempt $i failed (Status: $HTTP_STATUS, Body: $(cat /tmp/health_response.json 2>/dev/null)). Waiting 3s..."
+            sleep 3
+          done
+
+          if [ "$SMOKE_PASSED" != "true" ]; then
+            echo "❌ SMOKE TEST FAILED: /health did not return 200 Healthy."
+          else
+            # Test 2: Database / router check (/api/admin/corrections)
+            echo "👉 Checking /api/admin/corrections endpoint..."
+            CORR_STATUS=$(curl -s -o /tmp/corr_response.json -w "%{http_code}" "$API_URL/api/admin/corrections" || echo "000")
+            if [ "$CORR_STATUS" = "200" ]; then
+              echo "   ✅ /api/admin/corrections responded 200 OK."
+            else
+              echo "   ❌ /api/admin/corrections returned HTTP $CORR_STATUS: $(cat /tmp/corr_response.json 2>/dev/null)"
+              SMOKE_PASSED=false
+            fi
+          fi
+
+          # If smoke test failed, trigger automated rollback
+          if [ "$SMOKE_PASSED" != "true" ]; then
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "🚨 POST-DEPLOYMENT SMOKE TEST FAILED! ROLLING BACK..."
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+            if [ "$HAS_BACKUP" = "true" ] && [ -s /tmp/sentimetric_backup.zip ]; then
+              echo "🔄 Reverting Lambda '$FN_NAME' to previous working code package..."
+              aws lambda update-function-code \
+                --function-name "$FN_NAME" \
+                --region "$REGION" \
+                --zip-file fileb:///tmp/sentimetric_backup.zip > /dev/null
+              
+              aws lambda wait function-updated --function-name "$FN_NAME" --region "$REGION"
+              echo "✅ Rollback complete. Lambda restored to previous working version."
+
+              ROLLBACK_STATUS=$(curl -s -o /tmp/rb_check.json -w "%{http_code}" "$API_URL/health" || echo "000")
+              echo "   Post-rollback /health check status: $ROLLBACK_STATUS"
+            else
+              echo "⚠️ No previous backup package available to roll back to."
+            fi
+
+            echo "❌ Deployment rejected due to smoke test failure. Halting pipeline to protect production."
+            exit 1
+          fi
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🎉 ALL POST-DEPLOY SMOKE TESTS PASSED (ALL GREEN)!"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
   # ──────────────────────────────────────────────────────────────
