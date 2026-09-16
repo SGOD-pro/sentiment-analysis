@@ -17,14 +17,17 @@ from logger import get_logger
 log = get_logger(__name__)
 
 # Locate artifacts directory
+# Locate artifacts directory inside backend
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ARTIFACT_DIR = os.environ.get("ARTIFACT_DIR")
 if not ARTIFACT_DIR or not os.path.exists(os.path.join(ARTIFACT_DIR, "mlp_weights.npz")):
+    # 1. Check backend/src/artifacts (standard package layout)
     candidate = os.path.abspath(os.path.join(_BASE_DIR, "..", "artifacts"))
     if os.path.exists(os.path.join(candidate, "mlp_weights.npz")):
         ARTIFACT_DIR = candidate
     else:
-        candidate = os.path.abspath(os.path.join(_BASE_DIR, "..", "..", "..", "lambda", "artifacts"))
+        # 2. Check backend/artifacts (root backend layout)
+        candidate = os.path.abspath(os.path.join(_BASE_DIR, "..", "..", "artifacts"))
         if os.path.exists(os.path.join(candidate, "mlp_weights.npz")):
             ARTIFACT_DIR = candidate
         else:

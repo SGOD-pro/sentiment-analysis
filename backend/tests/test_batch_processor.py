@@ -156,3 +156,132 @@ def test_batch_nonexistent_id(aws_mock):
     """Processing a non-existent batch should log error and return."""
     from services.batch_processor import process_batch
     process_batch("nonexistent-batch-id")
+
+
+def test_batch_idempotency_duplicate_trigger(aws_mock):
+    """Calling process_batch twice on the same batch must be idempotent (no double-counting)."""
+    batch_id = _seed_batch(aws_mock)
+
+    invoke_count = 0
+
+    def _counting_invoke(texts, *args, **kwargs):
+        nonlocal invoke_count
+        invoke_count += 1
+        return _fake_invoke(texts)
+
+    with patch("services.batch_processor.invoke_lambda", side_effect=_counting_invoke):
+        from services.batch_processor import process_batch
+        # First execution: claims pending -> processing -> done
+        process_batch(batch_id)
+        first_invoke_count = invoke_count
+
+        # Second execution (e.g. AWS Lambda Event retry or duplicate trigger)
+        process_batch(batch_id)
+        # Should not have run again!
+        assert invoke_count == first_invoke_count
+
+    batch = aws_mock.Table("Batches").get_item(Key={"batch_id": batch_id})["Item"]
+    assert batch["status"] == "done"
+    # Never 4 / 2! Must strictly remain 2
+    assert batch["processed_count"] == 2
+
+    # Reviews table must contain exactly 2 items, not duplicated
+    reviews_count = aws_mock.Table("Reviews").scan()["Count"]
+    assert reviews_count == 2
+
+
+def test_batch_active_lock_skips_concurrent_caller(aws_mock):
+    """If another worker is currently processing the batch, a second caller must back off."""
+    from datetime import datetime, timezone
+    batch_id = _seed_batch(aws_mock)
+
+    # Set status to processing with a timestamp just 5 seconds ago
+    aws_mock.Table("Batches").update_item(
+        Key={"batch_id": batch_id},
+        UpdateExpression="SET #s = :s, processing_started_at = :ts",
+        ExpressionAttributeNames={"#s": "status"},
+        ExpressionAttributeValues={
+            ":s": "processing",
+            ":ts": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+
+    with patch("services.batch_processor.invoke_lambda") as mock_invoke:
+        from services.batch_processor import process_batch
+        process_batch(batch_id)
+        # Must not invoke lambda since another active worker owns it
+        assert mock_invoke.call_count == 0
+
+
+def test_batch_stale_lock_recovery(aws_mock):
+    """If a worker crashed and lock is older than threshold, a new invocation takes over."""
+    batch_id = _seed_batch(aws_mock)
+
+    # Simulate worker crash 20 minutes ago (stale lock)
+    stale_ts = "2020-01-01T00:00:00Z"
+    aws_mock.Table("Batches").update_item(
+        Key={"batch_id": batch_id},
+        UpdateExpression="SET #s = :s, processing_started_at = :ts",
+        ExpressionAttributeNames={"#s": "status"},
+        ExpressionAttributeValues={
+            ":s": "processing",
+            ":ts": stale_ts,
+        },
+    )
+
+    with patch("services.batch_processor.invoke_lambda", side_effect=_fake_invoke):
+        from services.batch_processor import process_batch
+        process_batch(batch_id)
+
+    batch = aws_mock.Table("Batches").get_item(Key={"batch_id": batch_id})["Item"]
+    assert batch["status"] == "done"
+    assert batch["processed_count"] == 2
+
+
+def test_chunk_idempotency_skips_already_completed_chunks(aws_mock):
+    """If partial execution already completed chunk 0, retry skips chunk 0 and processes chunk 1."""
+    csv_content = "text,category,date\nReview 1,A,2025-01-15\nReview 2,A,2025-01-15\nReview 3,B,2025-01-16\nReview 4,B,2025-01-16\n"
+    batch_id = _seed_batch(aws_mock, csv_content=csv_content)
+
+    # Pre-mark chunk 0 as completed with 2 reviews processed
+    aws_mock.Table("Batches").update_item(
+        Key={"batch_id": batch_id},
+        UpdateExpression="SET completed_chunks = :cc, processed_count = :pc",
+        ExpressionAttributeValues={
+            ":cc": {"0"},
+            ":pc": 2,
+        },
+    )
+
+    invoked_texts = []
+
+    def _tracking_invoke(texts, *args, **kwargs):
+        invoked_texts.extend(texts)
+        return _fake_invoke(texts)
+
+    with patch("services.batch_processor.invoke_lambda", side_effect=_tracking_invoke):
+        with patch("services.batch_processor.get_settings") as mock_gs:
+            from config import Settings
+            settings = Settings(
+                _env_file=None,
+                s3_bucket="test-bucket",
+                lambda_function_name="test-lambda",
+                lambda_batch_size=2,  # 4 rows -> chunk 0 (rows 0-1), chunk 1 (rows 2-3)
+            )
+            mock_gs.return_value = settings
+
+            from services.batch_processor import process_batch
+            process_batch(batch_id)
+
+    # Chunk 0 was skipped! Only Chunk 1 ("Review 3", "Review 4") was invoked
+    assert "Review 1" not in invoked_texts
+    assert "Review 2" not in invoked_texts
+    assert "Review 3" in invoked_texts
+    assert "Review 4" in invoked_texts
+
+    batch = aws_mock.Table("Batches").get_item(Key={"batch_id": batch_id})["Item"]
+    assert batch["status"] == "done"
+    # Total processed count must be 2 (initial) + 2 (chunk 1) = 4, never exceeding total_reviews!
+    assert batch["processed_count"] == 4
+    assert batch["completed_chunks"] == {"0", "1"}
+

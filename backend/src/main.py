@@ -13,7 +13,6 @@ from contextlib import asynccontextmanager
 import sys
 from pathlib import Path
 
-# Add src/ to sys.path so that absolute imports work when running `uvicorn src.main:app` from the backend directory
 sys.path.insert(0, str(Path(__file__).parent))
 
 from dotenv import load_dotenv
