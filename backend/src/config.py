@@ -10,6 +10,7 @@ Example:
     settings = get_settings()
     print(settings.dynamodb_reviews_table)  # "Reviews"
 """
+# agy --conversation=c92ce513-24e3-41ee-9b88-9c36c9a75e41
 
 from functools import lru_cache
 
