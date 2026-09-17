@@ -84,9 +84,12 @@ def _batch_write_reviews(table, items: list[dict]) -> None:
 
 def _build_review_item(row: dict, result: dict, batch_id: str,
                        text_col: str, category_col: str | None,
-                       date_col: str | None, now_ts: str) -> dict:
+                       date_col: str | None, now_ts: str,
+                       row_idx: int = 0) -> dict:
     """Build a single DynamoDB review item from one row and its inference result."""
-    review_id = str(uuid.uuid4())
+    # Deterministic UUID5 ensures idempotency: re-running any chunk or batch
+    # will overwrite the exact same review_id in DynamoDB rather than creating duplicate items.
+    review_id = str(uuid.uuid5(uuid.NAMESPACE_OID, f"{batch_id}#{row_idx}"))
     category = row.get(category_col, "") if category_col else ""
     review_date = row.get(date_col, "") if date_col else ""
     sentiment = result.get("sentiment", "unknown")
@@ -339,9 +342,13 @@ def process_batch(batch_id: str) -> None:
         now_ts = datetime.now(timezone.utc).isoformat()
         review_items = []
         local_agg: dict = {}
-        for row, result in zip(chunk, results):
+        start_row_idx = chunk_idx * chunk_size
+        for i, (row, result) in enumerate(zip(chunk, results)):
+            global_row_idx = start_row_idx + i
             review_items.append(
-                _build_review_item(row, result, batch_id, text_col, category_col, date_col, now_ts)
+                _build_review_item(
+                    row, result, batch_id, text_col, category_col, date_col, now_ts, global_row_idx
+                )
             )
             _accum_from_result(local_agg, result, row, category_col, date_col)
 
