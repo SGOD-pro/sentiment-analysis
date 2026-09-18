@@ -338,7 +338,7 @@ export default function Dashboard() {
       {/* Bottom grid: category table + issue chart */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
         {/* Category table */}
-        <Card className="lg:col-span-8">
+        <Card className="lg:col-span-7">
           <CardHeader className="pb-2 flex-row justify-between items-start">
             <div>
               <CardTitle className="text-base">
@@ -408,51 +408,118 @@ export default function Dashboard() {
         </Card>
 
         {/* Issue distribution chart */}
-        <Card className="lg:col-span-4">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">Issue Distribution</CardTitle>
-            <p className="text-xs text-muted-foreground">Top issue tags</p>
+        <Card className="lg:col-span-5">
+          <CardHeader className="pb-2 flex-row justify-between items-start">
+            <div>
+              <CardTitle className="text-base">Issue Distribution</CardTitle>
+              <p className="text-xs text-muted-foreground">Top recurring issues</p>
+            </div>
+            {issues.length > 0 && (
+              <span className="text-xs font-semibold font-number text-muted-foreground bg-muted/60 px-2.5 py-0.5 rounded-full border border-border/50">
+                {issues.reduce((s, i) => s + (i.count || 0), 0).toLocaleString()} tagged
+              </span>
+            )}
           </CardHeader>
-          <CardContent>
+          <CardContent className="pt-2">
             {loading ? <Skeleton className="h-60 w-full" /> : issues.length === 0 ? (
               <div className="h-60 flex items-center justify-center">
                 <p className="text-xs text-muted-foreground">No issue data</p>
               </div>
-            ) : (
-              <ResponsiveContainer width="100%" height={280}>
-                <PieChart margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
-                  <Pie
-                    data={issues.slice(0, 8)}
-                    dataKey="count"
-                    nameKey="issue_tag"
-                    cx="50%"
-                    cy="50%"
-                    outerRadius={90}
-                    label={({ name, percent }) => `${String(name ?? "").replaceAll("_", " ")} (${(((percent ?? 0) * 100)).toFixed(0)}%)`}
-                    labelLine={true}
-                  >
-                    {issues.slice(0, 8).map((_, index) => (
-                      <Cell key={`cell-${index}`} fill={['#CF202F', '#E55353', '#F98B8B', '#FCA5A5', '#FECACA', '#FEE2E2', '#F3F4F6', '#E5E7EB'][index % 8]} />
-                    ))}
-                  </Pie>
-                  <Tooltip
-                    content={({ active, payload }) => {
-                      if (active && payload && payload.length) {
-                        const data = payload[0].payload;
-                        return (
-                          <div className="bg-background border border-border p-3 rounded-lg shadow-sm text-xs">
-                            <p className="font-bold mb-1">{data.issue_tag.replaceAll("_", " ")}</p>
-                            <p>Count: {data.count}</p>
-                            <p>Source: {data.cluster_source === 'per_category' ? 'Category Specific' : 'Global Fallback'}</p>
+            ) : (() => {
+              const totalIssueCount = issues.reduce((s, i) => s + (i.count || 0), 0);
+              const topIssues = issues.slice(0, 6);
+              const colors = ['#CF202F', '#EA580C', '#F59E0B', '#EC4899', '#8B5CF6', '#3B82F6', '#10B981', '#64748B'];
+
+              return (
+                <div className="flex flex-col sm:flex-row items-center gap-5 pt-1">
+                  {/* Donut Chart with centered total */}
+                  <div className="relative w-[180px] h-[180px] flex-shrink-0 flex items-center justify-center">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={topIssues}
+                          dataKey="count"
+                          nameKey="issue_tag"
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={50}
+                          outerRadius={75}
+                          paddingAngle={2}
+                          stroke="oklch(var(--card))"
+                          strokeWidth={2}
+                        >
+                          {topIssues.map((_, index) => (
+                            <Cell key={`cell-${index}`} fill={colors[index % colors.length]} />
+                          ))}
+                        </Pie>
+                        <Tooltip
+                          content={({ active, payload }) => {
+                            if (active && payload && payload.length) {
+                              const data = payload[0].payload;
+                              const pct = totalIssueCount > 0 ? ((data.count / totalIssueCount) * 100).toFixed(1) : "0";
+                              return (
+                                <div className="bg-background/95 backdrop-blur-sm border border-border p-2.5 rounded-lg shadow-md text-xs">
+                                  <p className="font-semibold capitalize text-foreground mb-1">
+                                    {data.issue_tag.replaceAll("_", " ")}
+                                  </p>
+                                  <div className="flex items-center gap-2 text-muted-foreground">
+                                    <span>Count: <strong className="text-foreground font-number">{data.count}</strong></span>
+                                    <span>·</span>
+                                    <span>Share: <strong className="text-foreground font-number">{pct}%</strong></span>
+                                  </div>
+                                  <p className="text-[10px] text-muted-foreground mt-1">
+                                    {data.cluster_source === 'per_category' ? 'Category Specific' : 'Global Fallback'}
+                                  </p>
+                                </div>
+                              );
+                            }
+                            return null;
+                          }}
+                        />
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                      <span className="text-2xl font-bold font-number tracking-tight text-foreground leading-none">
+                        {totalIssueCount}
+                      </span>
+                      <span className="text-[10px] uppercase font-semibold text-muted-foreground tracking-wider mt-1">
+                        Issues
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Clean Legend Breakdown List */}
+                  <div className="flex-1 w-full space-y-2 min-w-0">
+                    {topIssues.map((item, index) => {
+                      const pct = totalIssueCount > 0 ? ((item.count / totalIssueCount) * 100).toFixed(0) : "0";
+                      const color = colors[index % colors.length];
+                      return (
+                        <div key={item.issue_tag} className="flex items-center justify-between gap-2 text-xs py-0.5 group">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span
+                              className="w-2.5 h-2.5 rounded-full flex-shrink-0 transition-transform group-hover:scale-125"
+                              style={{ backgroundColor: color }}
+                            />
+                            <span
+                              className="truncate font-medium text-foreground capitalize"
+                              title={item.issue_tag.replaceAll("_", " ")}
+                            >
+                              {item.issue_tag.replaceAll("_", " ")}
+                            </span>
                           </div>
-                        );
-                      }
-                      return null;
-                    }}
-                  />
-                </PieChart>
-              </ResponsiveContainer>
-            )}
+                          <div className="flex items-center gap-1.5 flex-shrink-0 font-number">
+                            <span className="font-semibold text-foreground">{item.count}</span>
+                            <span className="text-[11px] text-muted-foreground w-8 text-right font-medium">
+                              {pct}%
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
           </CardContent>
         </Card>
       </div>
