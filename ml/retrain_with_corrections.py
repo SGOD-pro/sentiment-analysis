@@ -67,8 +67,10 @@ def embed_texts(texts: list[str], artifacts_dir: Path) -> np.ndarray:
             "attention_mask": mask,
             "token_type_ids": token_type,
         })
-        # mean-pool over token dimension
-        emb = out[0].mean(axis=1)
+        # CLS pooling and unit normalization matching BGE architecture and production
+        cls_emb = out[0][:, 0, :]
+        norm = np.linalg.norm(cls_emb, axis=1, keepdims=True)
+        emb = cls_emb / np.clip(norm, 1e-9, None)
         embeddings.append(emb[0])
     return np.array(embeddings, dtype=np.float32)
 

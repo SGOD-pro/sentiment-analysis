@@ -442,9 +442,9 @@ def main():
         if PEAK_CONCURRENCY >= 16:
             ramp_concurrencies = [4, 8, 12, 16]
         elif PEAK_CONCURRENCY >= 8:
-            ramp_concurrencies = [2, 4, 6, 8]
+            ramp_concurrencies = [1, 2, 4, 8]
         else:
-            ramp_concurrencies = [2, PEAK_CONCURRENCY]
+            ramp_concurrencies = [1, PEAK_CONCURRENCY]
         ramp_stats = run_concurrency_ramp_benchmark(texts, ramp_concurrencies, client)
 
     # 3. Sustained Maximum Peak Blast
