@@ -30,8 +30,8 @@ Resources:
       Description: BGE ONNX text embedding generator with cold start optimization and ThreadPool micro-batching
       CodeUri: ./
       Handler: handler.lambda_handler
-      MemorySize: 512
-      Timeout: 30
+      MemorySize: 1024
+      Timeout: 60
 
 Outputs:
   BgeTextEmbedderFunctionName:

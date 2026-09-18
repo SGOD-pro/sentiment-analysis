@@ -57,8 +57,8 @@ Resources:
       Description: SentiMetric FastAPI backend via Mangum
       CodeUri: src/           # packages backend/src/ as Lambda zip root
       Handler: lambda_handler.handler   # no src. prefix — CodeUri already points into src/
-      MemorySize: 256          # right-sized — no ONNX runtime here, FastAPI + boto3 only
-      Timeout: 30
+      MemorySize: 512          # 512MB allocates ~0.3 vCPU for Python ThreadPool workers
+      Timeout: 300             # 5 minutes for processing large review batches without timeout wall
       Environment:
         Variables:
           FRONTEND_URL: !Ref FrontendOrigin

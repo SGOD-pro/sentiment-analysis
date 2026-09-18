@@ -233,7 +233,7 @@ def process_batch(batch_id: str) -> None:
         # Status is not "pending" — determine whether to bail or take over.
         current = tables.batches.get_item(
             Key={"batch_id": batch_id},
-            ProjectionExpression="#s, processing_started_at",
+            ProjectionExpression="#s, processing_started_at, processing_heartbeat_at",
             ExpressionAttributeNames={"#s": "status"},
         ).get("Item", {})
 
@@ -244,30 +244,31 @@ def process_batch(batch_id: str) -> None:
             return
 
         if current_status == "processing":
-            started_at_str = current.get("processing_started_at")
+            # Check elapsed seconds since last chunk heartbeat (or started_at if no chunks done yet)
+            heartbeat_str = current.get("processing_heartbeat_at") or current.get("processing_started_at")
             elapsed = float("inf")
-            if started_at_str:
+            if heartbeat_str:
                 try:
-                    started_dt = datetime.fromisoformat(started_at_str)
-                    elapsed = (datetime.now(timezone.utc) - started_dt).total_seconds()
+                    heartbeat_dt = datetime.fromisoformat(heartbeat_str)
+                    elapsed = (datetime.now(timezone.utc) - heartbeat_dt).total_seconds()
                 except ValueError:
                     pass
 
             if elapsed < settings.stale_lock_threshold_seconds:
                 log.warning(
-                    "batch owned by another invocation — skipping",
-                    extra={"batch_id": batch_id, "elapsed_seconds": round(elapsed, 1)},
+                    "batch owned by another active invocation — skipping",
+                    extra={"batch_id": batch_id, "inactive_seconds": round(elapsed, 1)},
                 )
                 return
 
             # Stale lock from a crashed invocation — take over and resume from completed chunks.
             log.warning(
-                "taking over stale batch lock",
-                extra={"batch_id": batch_id, "stale_elapsed_seconds": round(elapsed, 1)},
+                "taking over stale batch lock after inactive heartbeat",
+                extra={"batch_id": batch_id, "inactive_seconds": round(elapsed, 1)},
             )
             tables.batches.update_item(
                 Key={"batch_id": batch_id},
-                UpdateExpression="SET processing_started_at = :now",
+                UpdateExpression="SET processing_started_at = :now, processing_heartbeat_at = :now",
                 ExpressionAttributeValues={":now": now_iso},
             )
             # Fall through — will skip completed chunks below.
@@ -365,10 +366,11 @@ def process_batch(batch_id: str) -> None:
         # counter once per chunk because we check already_done before processing.
         tables.batches.update_item(
             Key={"batch_id": batch_id},
-            UpdateExpression="ADD completed_chunks :idx, processed_count :c",
+            UpdateExpression="ADD completed_chunks :idx, processed_count :c SET processing_heartbeat_at = :now",
             ExpressionAttributeValues={
                 ":idx": {str(chunk_idx)},   # Python set → DynamoDB SS
                 ":c": len(review_items),
+                ":now": datetime.now(timezone.utc).isoformat(),
             },
         )
 

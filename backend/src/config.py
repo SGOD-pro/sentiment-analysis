@@ -66,9 +66,9 @@ class Settings(BaseSettings):
     # Maximum concurrent worker threads for batch chunk processing.
     # Benchmarked: 4 workers gives highest throughput (540 rev/s) and lowest RSS without CPU oversubscription.
     batch_max_workers: int = Field(default=4, validation_alias="BATCH_MAX_WORKERS")
-    # Seconds before a "processing" batch lock is considered stale from a crashed invocation.
-    # Should exceed Lambda timeout to avoid premature takeover.
-    stale_lock_threshold_seconds: int = Field(default=600, validation_alias="STALE_LOCK_THRESHOLD_SECONDS")
+    # Seconds without heartbeat progress before a "processing" batch lock is considered stale.
+    # Enables rapid recovery from Lambda container crashes without waiting 10 minutes.
+    stale_lock_threshold_seconds: int = Field(default=45, validation_alias="STALE_LOCK_THRESHOLD_SECONDS")
 
     # Upload limits
     max_upload_size_mb: int = 50
